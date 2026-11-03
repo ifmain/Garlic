@@ -1,0 +1,26 @@
+{
+	email {$GARLIC_ACME_EMAIL}
+	servers {
+		protocols h1 h2
+	}
+}
+{$GARLIC_DOMAIN} {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+	@notH2 expression `{http.request.proto} != "HTTP/2.0"`
+	handle @notH2 {
+		respond "HTTP/2 required" 505
+	}
+	@transport path /v1/tunnel /v1/dns
+	handle @transport {
+		reverse_proxy h2c://127.0.0.1:8070 {
+			flush_interval -1
+		}
+	}
+	handle {
+		respond "Garlic gateway" 200
+	}
+}

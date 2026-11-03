@@ -1,0 +1,15 @@
+[package]
+name = "garlic-infinite-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+garlic-core = { path = "../../crates/garlic-core" }
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+base64 = { workspace = true }

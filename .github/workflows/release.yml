@@ -1,0 +1,70 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: windows-latest
+            platform: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: rustup toolchain install 1.99.1 --profile minimal
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --workspace --locked
+      - name: Linux integration
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python integration-tests/smoke.py
+          python -m pip install h2==4.4.1
+          mkdir -p "$RUNNER_TEMP/caddy"
+          cd "$RUNNER_TEMP/caddy"
+          curl -fL https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_amd64.tar.gz -o caddy_2.10.2_linux_amd64.tar.gz
+          curl -fL https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_checksums.txt -o checksums.txt
+          awk '$2 == "caddy_2.10.2_linux_amd64.tar.gz"' checksums.txt | sha512sum --check --strict -
+          tar -xzf caddy_2.10.2_linux_amd64.tar.gz caddy
+          cd "$GITHUB_WORKSPACE"
+          CADDY="$RUNNER_TEMP/caddy/caddy" python integration-tests/proxy_h2.py
+      - run: python scripts/package-release.py ${{ matrix.platform }} dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/*.zip
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Source archive and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=Garlic/ -o "dist/garlic-${GITHUB_REF_NAME}-source.zip" HEAD
+          cd dist
+          sha256sum *.zip > SHA256SUMS
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --prerelease --title "Garlic $GITHUB_REF_NAME — development prerelease" --notes-file docs/releases/v0.3.0.md
