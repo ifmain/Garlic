@@ -1,7 +1,0 @@
-[package]
-name = "garlic-rollout"
-version = "0.9.2"
-edition = "2021"
-
-[dependencies]
-serde_json = "1"
