@@ -1,4 +1,18 @@
-# Garlic v0.3.0 — HTTPS/HTTP2 proxy prototype
+# Garlic Alpha
+
+[Android and Windows downloads](https://github.com/ifmain/Garlic/releases/tag/alpha-0.9.2.1)
+
+The Alpha client and server sources live under [reconstructed](reconstructed). The Windows UI is in [windows](reconstructed/windows), the Android launcher and service in [android-apk](reconstructed/android-apk), and the Alpha UI changes and packager in [alpha/android](reconstructed/alpha/android). The shared client, protocol codecs and server roles are in the [Rust workspace](reconstructed/rust). See the [module ABI](reconstructed/alpha/protocol-module.md) for the supported instructions and update procedure.
+
+### Building Alpha
+
+Run Cargo in `reconstructed/rust`. For a Linux server use `cargo build --locked --release -p garlic-coordinator --bin garlic-server`. For Windows x64 build `cargo build --locked --release --target x86_64-pc-windows-gnullvm -p garlic-client --features alpha --bin garlic-internal-network`, then run `reconstructed/windows/build.ps1 -Alpha -Core <absolute-path-to-core.exe>` on Windows.
+
+For Android, configure the NDK clang linker for API 29 for each target, and build `cargo build --locked --release --target <target> -p garlic-client --features alpha --lib` for both `aarch64-linux-android` and `armv7-linux-androideabi`. The packager expects a JDK in `.toolchains/jdk-*/bin`, Android SDK platform 35 and build-tools 35.0.0 in `.toolchains/android-sdk`, and `.toolchains/apktool_3.0.3.jar`. From the repository root run `python reconstructed/alpha/android/build.py garlic-alpha.apk`. Local builds generate a local preview signing key. Android requires the same signer to install an update over an existing Alpha installation.
+
+### Previous releases
+
+## Garlic v0.3.0 — HTTPS/HTTP2 proxy prototype
 
 Garlic provides an authenticated proxy transport over HTTPS and HTTP/2, with an entry node, one or more exit nodes, a local CONNECT client, and DNS forwarding inside the channel. The original Infinity HTTP task queue remains a separate component.
 

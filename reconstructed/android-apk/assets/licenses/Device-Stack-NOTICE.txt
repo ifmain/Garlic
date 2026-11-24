@@ -1,0 +1,10 @@
+Garlic includes modified ipstack1.0.1 and tun2proxy0.8.7.
+Their authors, copyright notices and licenses are retained in Ipstack.txt
+(Apache-2.0) and Tun2proxy.txt(MIT).
+Upstream sources: https://github.com/narrowlink/ipstack
+https://github.com/tun2proxy/tun2proxy
+
+Local modifications preserve previously applied UDP parsing/cancellation,
+pooled connection generation, TCP buffer and Windows socket fixes, and add
+application-visible IPv4 UDP failures plus an absolute first-response deadline
+for unanswered QUIC Initial packets. See vendor/README.md in Garlic's source.

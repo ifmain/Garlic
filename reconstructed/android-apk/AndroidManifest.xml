@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" android:compileSdkVersion="37" android:compileSdkVersionCodename="17" package="org.garlic.client" platformBuildVersionCode="37" platformBuildVersionName="17">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+    </queries>
+    <application android:allowBackup="false" android:appComponentFactory="org.garlic.client.InterfaceFactory" android:debuggable="false" android:extractNativeLibs="true" android:icon="@mipmap/ic_launcher" android:label="Garlic" android:name="org.garlic.client.GarlicApplication" android:theme="@style/GarlicTheme">
+        <activity android:exported="true" android:name="org.garlic.client.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <service android:exported="false" android:foregroundServiceType="specialUse" android:name="org.garlic.client.GarlicProxyService" android:permission="android.permission.BIND_VPN_SERVICE">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="garlic_https_connect_proxy"/>
+            <intent-filter>
+                <action android:name="android.net.VpnService"/>
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

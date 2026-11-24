@@ -1,0 +1,15 @@
+[Unit]
+Description=Garlic DNS coordinator and ingress
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/garlic/entry.env
+ExecStart=%h/.local/bin/garlic-dns
+WorkingDirectory=%h/.local/share/garlic/entry
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+
+[Install]
+WantedBy=default.target
