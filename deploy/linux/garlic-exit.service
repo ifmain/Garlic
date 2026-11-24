@@ -1,0 +1,15 @@
+[Unit]
+Description=Garlic Infinite Storage and Relay v2 exit
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/garlic/exit.env
+ExecStart=/usr/bin/garlic-server --role exit
+WorkingDirectory=%h/.local/share/garlic/exit
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+
+[Install]
+WantedBy=default.target

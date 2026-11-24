@@ -1,0 +1,12 @@
+[package]
+name = "garlic-bind"
+version = "0.9.2"
+edition = "2021"
+
+[lib]
+name = "garlic_bind"
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni-sys = "=0.4.1"
+

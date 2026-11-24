@@ -1,0 +1,11 @@
+/target/
+/dist/
+__pycache__/
+*.p12
+*.jks
+.env
+*.keystore
+*.key
+*.pem
+*.pfx
+local.properties

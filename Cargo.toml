@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/android-bind",
+    "crates/client",
+    "crates/client-logic",
+    "crates/coordinator",
+    "crates/relay-data",
+    "crates/relay-session",
+    "crates/rollout",
+    "crates/updates",
+    "crates/updates/android",
+    "crates/state",
+]
+
+[profile.release]
+panic = "abort"
+strip = "symbols"
