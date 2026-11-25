@@ -22,6 +22,7 @@ public final class ReleaseUpdate {
     static void fetch(String address, OutputStream out, int limit) throws IOException {
         HttpsURLConnection c = (HttpsURLConnection)new URL(address).openConnection();
         c.setRequestProperty("User-Agent", "Garlic-Alpha");
+        c.setRequestProperty("Accept-Encoding", "identity");
         c.setConnectTimeout(10000); c.setReadTimeout(20000);
         try {
             if(c.getResponseCode()!=200 || c.getContentLengthLong()>limit) throw new IOException("Download failed");
@@ -31,6 +32,8 @@ public final class ReleaseUpdate {
                     size+=n; if(size>limit) throw new IOException("Download too large");
                     out.write(buffer,0,n);
                 }
+                long expected=c.getContentLengthLong();
+                if(expected>=0 && size!=expected) throw new EOFException("Incomplete download");
             }
         } finally { c.disconnect(); }
     }
@@ -151,25 +154,44 @@ public final class ReleaseUpdate {
         PackageManager pm=a.getPackageManager();
         PackageInfo old=pm.getPackageInfo(a.getPackageName(),PackageManager.GET_SIGNING_CERTIFICATES);
         PackageInfo apk=pm.getPackageArchiveInfo(file.getAbsolutePath(),PackageManager.GET_SIGNING_CERTIFICATES);
-        if(apk==null || !old.packageName.equals(apk.packageName) || apk.getLongVersionCode()<=old.getLongVersionCode() ||
-           (version!=null && !version.equals(apk.versionName)) || old.signingInfo==null || apk.signingInfo==null ||
-           !Arrays.equals(old.signingInfo.getApkContentsSigners(),apk.signingInfo.getApkContentsSigners())) throw new IOException("Package verification failed");
+        if(apk==null) throw new IOException("Android не смог прочитать скачанный APK.");
+        if(!old.packageName.equals(apk.packageName)) throw new IOException("APK предназначен для другого приложения.");
+        if(apk.getLongVersionCode()<=old.getLongVersionCode()) throw new IOException("Установлена такая же или более новая сборка.");
+        if(version!=null && !version.equals(apk.versionName)) throw new IOException("Версия APK отличается от версии релиза.");
+        if(old.signingInfo==null || apk.signingInfo==null ||
+           !Arrays.equals(old.signingInfo.getApkContentsSigners(),apk.signingInfo.getApkContentsSigners()))
+            throw new IOException("Android не подтвердил совпадение подписей приложения.");
     }
     private static void download(Activity a,String version,boolean preview) {
         downloading=true;
         new Thread(()->{
             File part=null;
+            String stage="storage";
             try {
-                part=File.createTempFile("garlic-update-", ".part", a.getCacheDir());
-                try(OutputStream out=new FileOutputStream(part)) {
-                    fetch("https://github.com/ifmain/Garlic/releases/download/alpha-"+version+"/garlic-alpha.apk",out,64*1024*1024);
+                part=File.createTempFile("garlic-update-", ".apk", a.getCacheDir());
+                stage="download";
+                for(int attempt=0; ; attempt++) {
+                    try(OutputStream out=new FileOutputStream(part)) {
+                        fetch("https://github.com/ifmain/Garlic/releases/download/alpha-"+version+"/garlic-alpha.apk",out,64*1024*1024);
+                        break;
+                    } catch(java.net.SocketTimeoutException | EOFException interrupted) {
+                        if(attempt!=0) throw interrupted;
+                    }
                 }
+                stage="verify";
                 verify(a,part,version);
                 if(preview && !previews(a)) return;
+                stage="storage";
                 java.nio.file.Files.move(part.toPath(),pending(a).toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 a.getSharedPreferences("garlic_prefs",0).edit().putBoolean("pending_preview",preview).apply();
                 a.runOnUiThread(()->install(a,true));
-            } catch(Exception e) { a.runOnUiThread(()->Toast.makeText(a,"Не удалось скачать или проверить обновление",Toast.LENGTH_LONG).show()); }
+            } catch(Exception e) {
+                String message="download".equals(stage) ? "Не удалось загрузить APK с GitHub." :
+                    "storage".equals(stage) ? "Не удалось сохранить APK в памяти телефона." :
+                    e instanceof IOException ? e.getMessage() : "Android не смог проверить APK.";
+                BackgroundSettings.record(a,"update_error stage="+stage+" version="+version+" error="+e.getClass().getSimpleName()+" detail="+message);
+                a.runOnUiThread(()->Toast.makeText(a,message,Toast.LENGTH_LONG).show());
+            }
             finally { if(part!=null) part.delete(); a.runOnUiThread(()->downloading=false); }
         },"garlic-release-download").start();
     }

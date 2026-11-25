@@ -72,7 +72,7 @@ public final class BackgroundSettings {
         record(context, "vpn_start_error " + cause.getClass().getSimpleName());
     }
 
-    private static void record(Context a, String event) {
+    static void record(Context a, String event) {
         java.io.File dir = logs(a);
         if (!dir.isDirectory() && !dir.mkdirs()) return;
         java.time.Instant now = java.time.Instant.now();
