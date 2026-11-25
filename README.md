@@ -2,7 +2,7 @@
 
 Garlic — self-hosted VPN с клиентами для Android и Windows. Клиенты используют общее сетевое ядро на Rust. Один серверный бинарник запускается в роли входной, промежуточной или выходной ноды.
 
-**Скачать:** [Android APK и Windows x64 ZIP](https://github.com/ifmain/Garlic/releases/tag/alpha-0.9.2.1). Архив Windows нужно распаковать целиком и открыть `Garlic.exe`. На Android пакет называется `ru.ifmain.garlic`.
+Скачать [Windows x64 EXE](https://github.com/ifmain/Garlic/releases/download/alpha-0.9.4/Garlic-Alpha-Windows-x64.exe) или [Android APK](https://github.com/ifmain/Garlic/releases/download/alpha-0.9.4/garlic-alpha.apk). Windows запрашивает права администратора до открытия приложения. Клиенты предлагают загрузить новую версию при запуске. Windows проверяет подпись выпуска и применяет обновление при следующем запуске. На Android установку подтверждает системный установщик.
 
 ## Linux-сервер
 
@@ -24,7 +24,7 @@ rustup target add x86_64-pc-windows-msvc
 .\apps\windows\build.ps1
 ```
 
-Для Rust GNU LLVM можно передать `-Target x86_64-pc-windows-gnullvm`; для этого нужен LLVM-MinGW в PATH и настроенный Cargo linker. Скрипт собирает ядро, компилирует интерфейс и создаёт `dist/Garlic-Alpha-Windows-x64.zip`. Библиотеки времени выполнения Windows и лицензии входят в `apps/windows/runtime`.
+Для GNU LLVM можно указать `-Target x86_64-pc-windows-gnullvm`. Результат сборки — `dist/Garlic-Alpha-Windows-x64.exe`. Исполняемый файл содержит интерфейс, сетевое ядро и Wintun. Для собственного канала обновлений укажите свой репозиторий в клиентах и замените открытый ключ в `apps/windows/release-public.xml` на свой. Подпись EXE для обновления — отдельный бинарный файл `.exe.sig` (RSA PKCS#1 v1.5, SHA-256).
 
 ## Android
 

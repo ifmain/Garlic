@@ -55,7 +55,7 @@ def main():
                 shutil.copyfile(target / triple / "release" / lib, dest / lib)
         classes = work / "classes"
         classes.mkdir()
-        run(java / ("javac" + exe), "--release", "8", "-encoding", "UTF-8", "-cp", jar, "-d", classes, APP / "BackgroundSettings.java")
+        run(java / ("javac" + exe), "--release", "8", "-encoding", "UTF-8", "-cp", jar, "-d", classes, *sorted(APP.glob("*.java")))
         run(bt / ("d8" + script), "--min-api", "29", "--lib", jar, "--output", work, *classes.rglob("*.class"))
         unsigned = work / "unsigned.apk"
         run(java / ("java" + exe), "-jar", apktool, "b", "-p", work / "framework", app, "-o", unsigned)

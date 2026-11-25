@@ -23,6 +23,7 @@ public final class BackgroundSettings {
     }
 
     public static void recordLaunch(Activity a) {
+        ReleaseUpdate.check(a);
         record(a, "app_start android_sdk=" + android.os.Build.VERSION.SDK_INT);
     }
 
@@ -57,6 +58,7 @@ public final class BackgroundSettings {
     }
 
     public static void exportResult(Activity a, int request, int result, Intent data) {
+        ReleaseUpdate.permissionResult(a, request);
         if (request != EXPORT_LOG || result != Activity.RESULT_OK || data == null || data.getData() == null) return;
         new Thread(() -> {
             String message;

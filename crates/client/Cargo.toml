@@ -16,7 +16,7 @@ jni-sys = "=0.4.1"
 
 [target.'cfg(windows)'.dependencies]
 tproxy-config = "=7.0.10"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_Networking_WinSock"] }
 
 [target.'cfg(any(target_os = "android", windows))'.dependencies]
 tun = { version = "=0.8.14", features = ["async"] }

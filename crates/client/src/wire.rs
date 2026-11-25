@@ -65,6 +65,16 @@ impl Transport {
         }
     }
 }
+#[cfg(windows)]
+fn upload_ready(socket: &TcpStream) -> io::Result<bool> {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{WSAGetLastError, WSAPoll, WSAPOLLFD, POLLRDNORM};
+    let mut fd = WSAPOLLFD { fd: socket.as_raw_socket() as usize, events: POLLRDNORM, revents: 0 };
+    match unsafe { WSAPoll(&mut fd, 1, 0) } {
+        -1 => Err(io::Error::from_raw_os_error(unsafe { WSAGetLastError() })),
+        count => Ok(count != 0),
+    }
+}
 fn timed(e: &io::Error) -> bool {
     matches!(
         e.kind(),
@@ -665,8 +675,12 @@ impl Exchange {
             && !(eof && self.peer_closed)
             && !stop.load(std::sync::atomic::Ordering::Acquire)
         {
-            let n = self.tx_credit.min(buf.len()).min(self.record_limit);
-            if !eof && n > 0 && self.pending.len() < 256 {
+            // Service queued upload without waiting on an idle loopback socket between download bursts.
+            for _ in 0..if cfg!(windows) { 2 } else { 1 } {
+                let n = self.tx_credit.min(buf.len()).min(self.record_limit);
+                if eof || n == 0 || self.pending.len() >= 256 { break; }
+                #[cfg(windows)]
+                if !upload_ready(local)? { break; }
                 match local.read(&mut buf[..n]) {
                     Ok(0) => {
                         eof = true;
@@ -698,7 +712,8 @@ impl Exchange {
             // Drain incoming frames in bounded bursts before waiting for local upload.
             // Fragmented downloads otherwise pay one idle read timeout per fragment.
             for _ in 0..16 {
-                if !self.poll(local)? || self.ended || self.peer_closed { break; }
+                if !self.poll(local)? { break; }
+                if self.ended || self.peer_closed { break; }
             }
             if let Some((_, bytes, sent)) = self
                 .pending

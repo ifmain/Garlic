@@ -566,8 +566,13 @@ public sealed class GarlicApp
 				ProcessStartInfo start = ((tunnelMode != 1) ? new ProcessStartInfo(binary, "vpn")
 				{
 					WorkingDirectory = Path.GetDirectoryName(binary),
-					UseShellExecute = true,
-					Verb = "runas",
+#if GARLIC_BUNDLE
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+#else
+                    UseShellExecute = true,
+                    Verb = "runas",
+#endif
 					WindowStyle = ProcessWindowStyle.Hidden
 				} : new ProcessStartInfo(binary, "proxy --bind 127.0.0.1:10888")
 				{
@@ -1673,7 +1678,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.3";
+    internal const string Version = "0.9.4";
 #else
     internal const string Version = "0.9.2";
 #endif
@@ -1787,6 +1792,9 @@ internal static class InterfaceBootstrap
             if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG")))
                 Environment.SetEnvironmentVariable("GARLIC_CLIENT_CONFIG", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Garlic Alpha", "client.json"));
 #endif
+#if GARLIC_BUNDLE
+            if (!ReleaseClient.Prepare()) return;
+#endif
             GarlicApp.LogUi("app_start", "windows");
             Application application = new Application();
 			string path = Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Garlic", "client.json");
@@ -1800,7 +1808,11 @@ internal static class InterfaceBootstrap
 			{
 				try
 				{
-					application.Run(createdNew ? SelectWindow() : GarlicApp.CreateWindow(GarlicBuild.Version));
+					Window main = createdNew ? SelectWindow() : GarlicApp.CreateWindow(GarlicBuild.Version);
+#if GARLIC_BUNDLE
+                    main.Loaded += delegate { ReleaseClient.Check(main); };
+#endif
+                    application.Run(main);
 				}
 				finally
 				{
