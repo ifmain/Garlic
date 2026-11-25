@@ -1326,7 +1326,12 @@ public sealed class GarlicApp
 			try
 			{
 				garlicApp.Say("Запускаем сетевой модуль…");
-				if (Text(Get(await garlicApp.Cli(new string[1] { "version" }, null, 60000), "version")) != baseVersion)
+				var coreInfo = await garlicApp.Cli(new string[] { "version" }, null, 60000);
+#if GARLIC_ALPHA
+                if (Text(Get(coreInfo, "core_abi")) != "1" || !object.Equals(Get(coreInfo, "alpha_profiles"), true))
+#else
+                if (Text(Get(coreInfo, "version")) != baseVersion)
+#endif
 				{
 					throw new Exception("Версии приложения и сетевого модуля различаются");
 				}
@@ -1678,7 +1683,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.4";
+    internal const string Version = "0.9.5";
 #else
     internal const string Version = "0.9.2";
 #endif

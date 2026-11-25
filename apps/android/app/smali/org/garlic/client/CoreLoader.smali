@@ -76,21 +76,8 @@
 
     invoke-static {p0}, Lorg/garlic/client/BackgroundSettings;->applyProtocols(Landroid/content/Context;)V
 
-    invoke-virtual {p0}, Landroid/content/Context;->getPackageManager()Landroid/content/pm/PackageManager;
-
-    move-result-object v0
-
-    invoke-virtual {p0}, Landroid/content/Context;->getPackageName()Ljava/lang/String;
-
-    move-result-object v1
-
-    const/4 v2, 0x0
-
-    invoke-virtual {v0, v1, v2}, Landroid/content/pm/PackageManager;->getPackageInfo(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;
-
-    move-result-object v0
-
-    iget-object v0, v0, Landroid/content/pm/PackageInfo;->versionName:Ljava/lang/String;
+    # Native core interface version expected by this bridge, independent of the APK release.
+    const-string v0, "0.9.2"
 
     .line 28
     new-instance v1, Ljava/io/File;
