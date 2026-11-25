@@ -97,6 +97,21 @@ internal static class ReleaseClient
         using (var rsa = new RSACryptoServiceProvider(new CspParameters(24) { Flags = CspProviderFlags.CreateEphemeralKey }))
         { rsa.FromXmlString(reader.ReadToEnd()); return rsa.VerifyData(file, "SHA256", signature); }
     }
+    internal static bool SupportWarning(string notes, string installed, string offered)
+    {
+        if (String.IsNullOrWhiteSpace(notes)) return false;
+        string first = notes.Trim().Split(new[] {'\n'}, 2)[0].Trim();
+        var marker = System.Text.RegularExpressions.Regex.Match(first,
+            @"^<!-- garlic-support-floor: ([0-9]{1,6}(?:\.[0-9]{1,6}){2,3}) -->$");
+        if (!marker.Success) return false;
+        Version floor = SupportVersion(marker.Groups[1].Value);
+        return floor > SupportVersion(installed) && floor <= SupportVersion(offered);
+    }
+    static Version SupportVersion(string value)
+    {
+        Version version = Version.Parse(value);
+        return new Version(version.Major,version.Minor,Math.Max(0,version.Build),Math.Max(0,version.Revision));
+    }
     static string ChannelFile { get { return Path.ChangeExtension(Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"),"include-prereleases"); } }
     internal static bool Previews { get { return File.Exists(ChannelFile); } }
     internal static void SetPreviews(bool enable)
@@ -168,8 +183,10 @@ internal static class ReleaseClient
                 if (manualRequested) MessageBox.Show(window,tag == null ? "Установлена последняя версия: "+GarlicBuild.Version : "Обновление уже установлено. Перезапустите Garlic.","Обновление Garlic");
                 return;
             }
-            accepted = MessageBox.Show(window,"Скачать и установить " + (preview ? "пререлиз" : "релиз") + " Garlic Alpha " + tag.Substring(6) + "? Обновление откроется при следующем запуске.",
-                "Обновление Garlic",MessageBoxButton.YesNo,MessageBoxImage.Question) == MessageBoxResult.Yes;
+            object notes;
+            bool important = release.TryGetValue("body", out notes) && SupportWarning(notes as string,GarlicBuild.Version,tag.Substring(6));
+            accepted = MessageBox.Show(window,(important ? "Поддержка вашей версии скоро закончится. Рекомендуем обновить Garlic.\n\n" : "") + "Скачать и установить " + (preview ? "пререлиз" : "релиз") + " Garlic Alpha " + tag.Substring(6) + "? Обновление откроется при следующем запуске.",
+                important ? "Важное обновление Garlic" : "Обновление Garlic",MessageBoxButton.YesNo,important ? MessageBoxImage.Warning : MessageBoxImage.Question) == MessageBoxResult.Yes;
             if (!accepted) return;
             await Task.Run(() => Install(tag));
             if(window.IsVisible) MessageBox.Show(window,"Обновление установлено. При следующем запуске откроется новая версия.","Garlic Alpha");

@@ -43,6 +43,13 @@ public final class ReleaseUpdate {
         }
         return false;
     }
+    static boolean supportWarning(String notes, String installed, String offered) {
+        if (notes == null) return false;
+        String line = notes.trim().split("\n",2)[0].trim();
+        java.util.regex.Matcher marker = java.util.regex.Pattern.compile(
+            "<!-- garlic-support-floor: ([0-9]{1,6}(?:\\.[0-9]{1,6}){2,3}) -->").matcher(line);
+        return marker.matches() && newer(marker.group(1), installed) && !newer(marker.group(1), offered);
+    }
     private static boolean previews(Activity a) {
         return a.getSharedPreferences("garlic_prefs",0).getBoolean("release_previews",false);
     }
@@ -104,6 +111,7 @@ public final class ReleaseUpdate {
                 }
                 final boolean preview=selected!=null && selected.getBoolean("prerelease");
                 final String version=selected==null?installed:selected.getString("tag_name").substring(6);
+                final boolean important=selected!=null && supportWarning(selected.optString("body"),installed,version);
                 a.runOnUiThread(() -> {
                     boolean notify=manualRequested;
                     checking=false;
@@ -113,8 +121,8 @@ public final class ReleaseUpdate {
                         if (notify) Toast.makeText(a,"Установлена последняя версия: "+installed,Toast.LENGTH_LONG).show();
                         return;
                     }
-                    new AlertDialog.Builder(a).setTitle("Обновление Garlic Alpha")
-                      .setMessage("Скачать и установить " + (preview?"пререлиз ":"релиз ") + version + "?")
+                    new AlertDialog.Builder(a).setTitle(important ? "Важное обновление Garlic Alpha" : "Обновление Garlic Alpha")
+                      .setMessage((important ? "Поддержка вашей версии скоро закончится. Рекомендуем обновить Garlic.\n\n" : "") + "Скачать и установить " + (preview?"пререлиз ":"релиз ") + version + "?")
                       .setNegativeButton("Позже",null).setPositiveButton("Скачать",(d,w)->{ if(!preview || previews(a)) download(a,version); }).show();
                 });
             } catch(Exception e) { android.util.Log.w("Garlic","Release check: "+e.getClass().getSimpleName());

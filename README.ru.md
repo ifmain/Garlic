@@ -21,6 +21,12 @@ VPN для Android и Windows на собственных Linux-серверах
 
 Автор Garlic благодарит **[2dust][2dust]** за код, использованный в интеграции X-UI. Для совместимости с панелью использовался проект **[3x-ui][panel]**. В клиенты также входят модифицированные ipstack и tun2proxy. [Уведомления и лицензии](apps/windows/runtime/assets/licenses)
 
+## Участие в проекте
+
+Буду рад отзывам, обсуждениям и pull request. Если хотите изменить поведение клиента, начните с SDK и примеров Pong и Dev Connection. [Предложить улучшение](https://github.com/ifmain/Garlic/issues) · [Garlic Plugins](https://github.com/ifmain/Garlic-Plugins)
+
+Собственный код Garlic распространяется по [Apache License 2.0](LICENSE). У стороннего кода и данных сохраняются их лицензии.
+
 [^wire]: [Жизненный цикл потоков и лимиты пользователей](crates/coordinator/PROTOCOL.md)
 [^data]: Antonio Muñoz, Sergio López Flores, Juan Carlos Jiménez Ariza. *Benign Network Traffic PCAP Dataset for Reproducibility* (2026), v1. [Набор данных](https://doi.org/10.5281/zenodo.19206234) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [Атрибуция и описание обработки](apps/android/app/assets/traffic-profile-notice.txt)
 

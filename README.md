@@ -21,6 +21,12 @@ Garlic’s traffic profile uses the sizes, directions and relative timing of enc
 
 The maintainer credits **[2dust][2dust]** for code reused in Garlic’s X-UI integration. The upstream panel used for compatibility work is **[3x-ui][panel]**. The clients also include modified versions of ipstack and tun2proxy. [Third-party notices](apps/windows/runtime/assets/licenses)
 
+## Contributing
+
+I welcome feedback, design discussions and pull requests. For client extensions, start with the SDK and the Pong and Dev Connection examples. [Issues](https://github.com/ifmain/Garlic/issues) · [Garlic Plugins](https://github.com/ifmain/Garlic-Plugins)
+
+Garlic’s original code is licensed under [Apache License 2.0](LICENSE). Third-party code and data retain their respective licenses.
+
 [^wire]: [Stream lifecycle and per-user limits](crates/coordinator/PROTOCOL.md)
 [^data]: Antonio Muñoz, Sergio López Flores, Juan Carlos Jiménez Ariza. *Benign Network Traffic PCAP Dataset for Reproducibility* (2026), v1. [Dataset](https://doi.org/10.5281/zenodo.19206234) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [Attribution and processing notes](apps/android/app/assets/traffic-profile-notice.txt)
 

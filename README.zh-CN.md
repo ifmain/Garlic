@@ -21,6 +21,12 @@ Garlic 的流量配置使用了下列数据集中加密 TLS 记录的长度、�
 
 Garlic 作者感谢 **[2dust][2dust]** 提供了用于 X-UI 集成的部分代码。面板兼容性工作参考了 **[3x-ui][panel]**。客户端还使用了经过修改的 ipstack 和 tun2proxy。 [第三方声明与许可证](apps/windows/runtime/assets/licenses)
 
+## 参与贡献
+
+欢迎反馈、讨论设计和提交拉取请求。要开发客户端扩展，可以先看看 SDK 以及 Pong 和 Dev Connection 示例。[提出建议](https://github.com/ifmain/Garlic/issues) · [Garlic Plugins](https://github.com/ifmain/Garlic-Plugins)
+
+Garlic 的原创代码采用 [Apache License 2.0](LICENSE)。第三方代码和数据沿用各自的许可证。
+
 [^wire]: [数据流的生命周期和用户配额](crates/coordinator/PROTOCOL.md)
 [^data]: Antonio Muñoz, Sergio López Flores, Juan Carlos Jiménez Ariza. *Benign Network Traffic PCAP Dataset for Reproducibility* (2026), v1. [数据集](https://doi.org/10.5281/zenodo.19206234) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [署名与数据处理说明](apps/android/app/assets/traffic-profile-notice.txt)
 
