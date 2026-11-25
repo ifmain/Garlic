@@ -59,6 +59,7 @@ public final class BackgroundSettings {
     }
 
     public static void exportResult(Activity a, int request, int result, Intent data) {
+        PluginFiles.result(a, request, result, data);
         ReleaseUpdate.permissionResult(a, request);
         if (request != EXPORT_LOG || result != Activity.RESULT_OK || data == null || data.getData() == null) return;
         new Thread(() -> {

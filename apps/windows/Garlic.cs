@@ -1020,7 +1020,7 @@ public sealed class GarlicApp
 		}
 		string[] array = new string[]
 		{
-			"UpdateButton", "LogsButton", "HomeButton", "ServersButton", "NodeTitle", "UsersButton", "Logo", "Auth", "Home", "Admin", "Server",
+			"PluginsButton", "UpdateButton", "LogsButton", "HomeButton", "ServersButton", "NodeTitle", "UsersButton", "Logo", "Auth", "Home", "Admin", "Server",
 			"Key", "Login", "Connection", "Subscription", "Power", "TunnelMode", "TunnelHint", "Route", "Takeover", "Logout",
 			"Username", "Days", "Unlimited", "Create", "Issue", "ChangeSub", "Toggle", "RoleButton", "Remove", "Users",
 			"Message", "RouteInfo", "Statistics", "ShowStatistics", "Servers", "Nodes", "StreamLimit", "WorkerLimit", "SaveServer", "RefreshServers",
@@ -1160,6 +1160,9 @@ public sealed class GarlicApp
 			C<Button>("Days").IsEnabled = true;
 		};
 		#if GARLIC_BUNDLE
+        C<Button>("PluginsButton").Click += delegate {
+            PluginFiles.Show(window, C<Button>("PluginsButton"), Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"), Say);
+        };
         C<Button>("UpdateButton").Visibility = Visibility.Visible;
         C<Button>("UpdateButton").Click += delegate { ReleaseClient.Check(window, true); };
 #endif
@@ -1687,7 +1690,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.6";
+    internal const string Version = "0.9.7";
 #else
     internal const string Version = "0.9.2";
 #endif

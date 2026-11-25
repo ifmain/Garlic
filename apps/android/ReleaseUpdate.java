@@ -44,10 +44,12 @@ public final class ReleaseUpdate {
         return false;
     }
     public static void addButton(Activity a, android.widget.LinearLayout parent) {
-        android.widget.Button button = new android.widget.Button(a);
-        button.setText("Обновить с GitHub");
+        android.widget.Button button = ((SecondaryButtons)a).secondaryButton("Обновить с GitHub");
         button.setOnClickListener(v -> check(a, true));
         parent.addView(button);
+        android.widget.Button plugins = ((SecondaryButtons)a).secondaryButton("Плагины");
+        plugins.setOnClickListener(v -> PluginFiles.show(a));
+        parent.addView(plugins);
     }
     public static void check(Activity a) { check(a, false); }
     private static void check(Activity a, boolean manual) {

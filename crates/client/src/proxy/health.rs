@@ -9,14 +9,49 @@ use std::{
 
 pub(super) struct RouteHealth {
     enabled: bool,
+    policy: ProbePolicy,
     samples: Mutex<BTreeMap<String, (Instant, Option<u64>)>>,
     changed: Condvar,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbePolicy {
+    interval_seconds: u64,
+    ingress_penalty_ms: u64,
+}
+
+impl ProbePolicy {
+    fn load(path: &std::path::Path) -> Self {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Data {
+            format: String, id: String, enabled: bool,
+            interval_seconds: u64, ingress_penalty_ms: u64,
+        }
+        use std::io::Read;
+        let data = (|| {
+            if !cfg!(feature = "alpha") { return None; }
+            let mut bytes = Vec::new();
+            std::fs::File::open(path).ok()?.take(8193).read_to_end(&mut bytes).ok()?;
+            if bytes.len() > 8192 { return None; }
+            serde_json::from_slice::<Data>(&bytes).ok()
+        })();
+        if let Some(v) = data {
+            if v.enabled && v.format == "garlic-plugin-data/1" && v.id == "dev-connection"
+                && (3..=60).contains(&v.interval_seconds) && v.ingress_penalty_ms <= 250 {
+                return Self { interval_seconds: v.interval_seconds, ingress_penalty_ms: v.ingress_penalty_ms };
+            }
+        }
+        Self { interval_seconds: 15, ingress_penalty_ms: 40 }
+    }
+}
+
 impl RouteHealth {
-    pub(super) fn new(enabled: bool) -> Self {
+    pub(super) fn new(enabled: bool, data: &std::path::Path) -> Self {
         Self {
             enabled,
+            policy: ProbePolicy::load(data),
             samples: Mutex::default(),
             changed: Condvar::new(),
         }
@@ -61,7 +96,7 @@ impl RouteHealth {
             (
                 failed_recently,
                 rank,
-                cost + if e.route == Route::ThroughRu { 40 } else { 0 },
+                cost + if e.route == Route::ThroughRu { self.policy.ingress_penalty_ms } else { 0 },
             )
         });
     }
@@ -90,6 +125,7 @@ pub(super) fn start(proxy: &Arc<Proxy>) {
         }
         indices.extend(pair.into_iter().flatten().map(|(i, _)| i));
     }
+    let interval = Duration::from_secs(proxy.health.policy.interval_seconds);
     let count = indices.len().min(4);
     for lane in 0..count {
         let group: Vec<_> = indices.iter().skip(lane).step_by(count).copied().collect();
@@ -114,7 +150,7 @@ pub(super) fn start(proxy: &Arc<Proxy>) {
                     .insert(e.url.clone(), (Instant::now(), cost));
                 p.health.changed.notify_all();
             }
-            thread::sleep(Duration::from_secs(15));
+            thread::sleep(interval);
         });
     }
 }

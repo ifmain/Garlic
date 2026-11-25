@@ -1,6 +1,7 @@
 .class public Lorg/garlic/client/MainActivity;
 .super Landroid/app/Activity;
 .source "MainActivity.java"
+.implements Lorg/garlic/client/SecondaryButtons;
 
 
 # instance fields
@@ -267,6 +268,14 @@
     move-exception p1
 
     :goto_0
+    return-object v0
+.end method
+
+.method public secondaryButton(Ljava/lang/String;)Landroid/widget/Button;
+    .locals 1
+    const/4 v0, 0x0
+    invoke-direct {p0, p1, v0}, Lorg/garlic/client/MainActivity;->button(Ljava/lang/String;Z)Landroid/widget/Button;
+    move-result-object v0
     return-object v0
 .end method
 
