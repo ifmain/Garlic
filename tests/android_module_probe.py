@@ -5,12 +5,14 @@ import json
 import os
 from pathlib import Path
 import socket
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
 import subprocess
 import time
 import zipfile
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from windows_module_reload import free_port, roundtrip, wait
+from windows_module_reload import delayed_gateway, free_port, roundtrip, wait
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -65,12 +67,35 @@ def verify(serial, folder, port, password, request, token, publish, echo):
         clean.callback(run,*adb,"reverse","--remove",f"tcp:{port}")
         local = int(run(*adb,"forward","tcp:0",f"tcp:{proxy}"))
         clean.callback(run,*adb,"forward","--remove",f"tcp:{local}")
+        # Discovery succeeds on the direct gateway, but opening a stream hangs.
+        timed_out = threading.Event()
+        class DeadDirect(BaseHTTPRequestHandler):
+            def do_GET(self):
+                info = dict(request("/v1/auth/info",token=token),device_leases=False)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps(info).encode())
+            def do_POST(self):
+                if self.path == "/v1/infinity/streams":
+                    timed_out.set()
+                time.sleep(8)
+            def log_message(self,*args):
+                pass
+        dead = clean.enter_context(ThreadingHTTPServer(("127.0.0.1",0),DeadDirect))
+        threading.Thread(target=dead.serve_forever,daemon=True).start()
+        clean.callback(dead.shutdown)
+        dead_port = dead.server_port
+        run(*adb,"reverse","--no-rebind",f"tcp:{dead_port}",f"tcp:{dead_port}")
+        clean.callback(run,*adb,"reverse","--remove",f"tcp:{dead_port}")
+        delayed_port = clean.enter_context(delayed_gateway(port,timed_out))
+        run(*adb,"reverse","--no-rebind",f"tcp:{delayed_port}",f"tcp:{delayed_port}")
+        clean.callback(run,*adb,"reverse","--remove",f"tcp:{delayed_port}")
         one = dict(version=128,frame="tlv",body="selective-ack")
         two = dict(version=129,frame="fragments",body="base")
         activate(one); offer(1,one)
         with (folder/"instrument.log").open("wb") as log:
             child = subprocess.Popen([*adb,"shell","am","instrument","-w","-r","-e","origin",origin,
-                "-e","secret",password,"-e","bind",f"127.0.0.1:{proxy}","garlic.lab.moduletest/garlic.lab.ModuleProbe"],stdout=log,stderr=log)
+                "-e","ingress",f"https://127.0.0.1:{delayed_port}","-e","direct",f"http://127.0.0.1:{dead_port}","-e","secret",password,"-e","bind",f"127.0.0.1:{proxy}","garlic.lab.moduletest/garlic.lab.ModuleProbe"],stdout=log,stderr=log)
             try:
                 def ready():
                     output = (folder/"instrument.log").read_text(errors="replace")
@@ -90,6 +115,13 @@ def verify(serial, folder, port, password, request, token, publish, echo):
                         assert f"exchange_open protocol={version} " in (folder/"garlic-server.log").read_text()
                         yield conn
                 with stream(128) as old:
+                    assert timed_out.is_set(), "direct route timeout was not exercised"
+                    with socket.create_connection(("127.0.0.1",local),5) as status_socket:
+                        status_socket.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                        with status_socket.makefile("rb") as response:
+                            while response.readline() not in (b"",b"\r\n"): pass
+                            assert json.load(response)["last_route"]["via"] == "through_ru"
+                    print("Android APK: direct stream stalled; ingress echoed 40000 bytes",flush=True)
                     activate(two); offer(2,two)
                     with stream(129): roundtrip(old)
                     # Advertise only the existing module. An invalid replacement must

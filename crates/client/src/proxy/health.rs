@@ -8,7 +8,7 @@ use std::{
 };
 
 pub(super) struct RouteHealth {
-    enabled: bool,
+    pub(super) enabled: bool,
     policy: ProbePolicy,
     samples: Mutex<BTreeMap<String, (Instant, Option<u64>)>>,
     changed: Condvar,

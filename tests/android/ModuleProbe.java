@@ -36,7 +36,15 @@ public final class ModuleProbe extends Instrumentation {
             Os.setenv("GARLIC_CA_CERT",new File(dir,"ca.pem").toString(),true);
             String origin = args.getString("origin");
             call("loginMulti",dir.toString(),origin,"fixture",args.getString("secret"));
-            call("startProxy",dir.toString(),"direct",origin,"",args.getString("bind"));
+            String direct = args.getString("direct");
+            File sessions = new File(dir, "client.sessions.json");
+            JSONObject book = new JSONObject(new String(Files.readAllBytes(sessions.toPath()), "UTF-8"));
+            JSONObject entries = book.getJSONObject("entries");
+            String ingress = args.getString("ingress");
+            entries.put(ingress, entries.getJSONObject(origin));
+            entries.put(direct, entries.getJSONObject(origin));
+            Files.write(sessions.toPath(), book.toString().getBytes("UTF-8"));
+            call("startProxy",dir.toString(),"auto",direct,ingress,args.getString("bind"));
             Bundle ready = new Bundle(); ready.putString("state","proxy ready"); sendStatus(1,ready);
             Thread.sleep(120000);
             call("stopProxy");

@@ -334,6 +334,19 @@ impl Proxy {
         order.retain(|ep|ep.slot.as_ref().is_none_or(|id|
             self.hooks.iter().any(|(name,_,gate)|name==id && gate.enabled())));
         self.health.order(&mut order, &self.failed, self.cooldown);
+        // During an outage keep new streams on a path that actually opened a
+        // stream, even if another gateway still responds quickly to discovery.
+        if self.health.enabled {
+            let failed = self.failed.lock().unwrap();
+            if failed.values().any(|t| t.elapsed() < self.cooldown) {
+                if let Some(last) = self.metrics.last_origin() {
+                    if let Some(index) = order.iter().position(|e| e.url == last &&
+                        failed.get(&e.url).is_none_or(|t| t.elapsed() >= self.cooldown)) {
+                        order[..=index].rotate_right(1);
+                    }
+                }
+            }
+        }
         if !self.peers.is_empty() {
             let failed=self.failed.lock().unwrap();
             if self.peers.iter().any(|p|p.enabled() && failed.get(&p.address).is_none_or(|t|t.elapsed()>=self.cooldown)){
@@ -392,10 +405,16 @@ impl Proxy {
                     if !retry {
                         break;
                     }
-                    self.failed
-                        .lock()
-                        .unwrap()
-                        .insert(endpoint.url.clone(), Instant::now());
+                    let mut failed = self.failed.lock().unwrap();
+                    failed.insert(endpoint.url.clone(), Instant::now());
+                    // Discovery checks only auth/info. A responsive node may still
+                    // time out opening a stream. Try the other path on this CONNECT.
+                    if let Some(next) = order.iter().position(|candidate|
+                        candidate.route != endpoint.route &&
+                        failed.get(&candidate.url).is_none_or(|t| t.elapsed() >= self.cooldown)
+                    ) {
+                        order[..=next].rotate_right(1);
+                    }
                 }
             }
         }

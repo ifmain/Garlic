@@ -1,7 +1,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use std::{fs, io::Write, path::Path, sync::Mutex, time::{Instant, SystemTime}};
 
-static LAST_ERROR: Mutex<Option<(&'static str, Instant)>> = Mutex::new(None);
+static LAST_ERROR: Mutex<Option<(&'static str, String, Instant)>> = Mutex::new(None);
 
 pub fn reason(message: &str) -> &'static str {
     let text = message.to_ascii_lowercase();
@@ -19,8 +19,8 @@ pub fn reason(message: &str) -> &'static str {
 pub fn write(config: &Path, event: &'static str, detail: &str) {
     if let Ok(mut last) = LAST_ERROR.lock() {
         if event.ends_with("_error") {
-            if last.is_some_and(|(e, t)| e == event && t.elapsed().as_secs() < 1) { return; }
-            *last = Some((event, Instant::now()));
+            if last.as_ref().is_some_and(|(e, d, t)| *e == event && d == detail && t.elapsed().as_secs() < 1) { return; }
+            *last = Some((event, detail.to_owned(), Instant::now()));
         }
         let Some(parent) = config.parent() else { return };
         let dir = parent.join("logs");

@@ -6,7 +6,7 @@ use garlic_state::{self as files, StateError};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
+use std::{collections::BTreeMap, path::PathBuf, sync::{Arc, Mutex}};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -21,6 +21,7 @@ struct Entry {
     session: SavedSession,
 }
 struct State {
+    claims: BTreeMap<String, Arc<Mutex<()>>>,
     inherited: Lease,
     inherited_origin: Option<String>,
     known: BTreeMap<String, Lease>,
@@ -80,6 +81,7 @@ impl Devices {
             path,
             origins,
             state: Mutex::new(State {
+                claims: BTreeMap::new(),
                 inherited: saved,
                 inherited_origin,
                 known,
@@ -135,8 +137,12 @@ impl Devices {
         session: &SavedSession,
         takeover: bool,
     ) -> Result<Option<String>, StateError> {
-        let mut s = self.state.lock().unwrap();
-        if let Some(e) = s.entries.get_mut(url).filter(|e| {
+        // Serialize claim/renew for this issuer only. A timeout on one node
+        // must not hold the device cache lock needed by every other route.
+        let gate = self.state.lock().unwrap().claims.entry(url.to_owned()).or_default().clone();
+        let _claim = gate.lock().unwrap();
+        let s = self.state.lock().unwrap();
+        if let Some(e) = s.entries.get(url).filter(|e| {
             !takeover && e.session.token == session.token && e.lease.expires_at > time() + 10
         }) {
             return Ok(Some(e.lease.token.clone()));
@@ -147,13 +153,15 @@ impl Devices {
             s.inherited_origin.as_deref() == Some(url)
                 && known.is_none_or(|old| old.token != lease.token)
         });
+        let candidates: Vec<_> = known.into_iter().chain(inherited).cloned().collect();
+        let device_id = s.inherited.device_id;
+        drop(s);
         let mut renewed = None;
         if !takeover {
-            for candidate in known.into_iter().chain(inherited) {
-                if candidate.expires_at <= time() || candidate.token.is_empty() {
+            for mut lease in candidates {
+                if lease.expires_at <= time() || lease.token.is_empty() {
                     continue;
                 }
-                let mut lease = candidate.clone();
                 if self.renew(url, session, &mut lease).is_ok() {
                     renewed = Some(lease);
                     break;
@@ -169,24 +177,25 @@ impl Devices {
                 "/v1/auth/device/claim",
                 Some(&session.token),
                 None,
-                Some(&json!({"device_id":s.inherited.device_id,"takeover":takeover})),
+                Some(&json!({"device_id":device_id,"takeover":takeover})),
             )?;
             serde_json::from_value::<Lease>(value)?
         };
         // Stock coordinators use this tuple for accounts exempt from device leases.
-        if lease.device_id == s.inherited.device_id
+        if lease.device_id == device_id
             && lease.generation == 0
             && lease.expires_at == u64::MAX
             && lease.token.is_empty()
         {
             return Ok(None);
         }
-        if lease.device_id != s.inherited.device_id
+        if lease.device_id != device_id
             || lease.token.is_empty()
             || lease.expires_at <= time()
         {
             return Err("invalid device claim response".into());
         }
+        let mut s = self.state.lock().unwrap();
         self.record(url, &lease, true)?;
         let token = lease.token.clone();
         s.known.insert(url.to_owned(), lease.clone());
@@ -258,5 +267,54 @@ impl Devices {
                 s.known.remove(&url);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::Config;
+    use std::{io::{BufRead, BufReader, Write}, net::TcpListener, sync::mpsc, thread, time::Duration};
+
+    #[test]
+    fn stalled_claim_does_not_hold_other_issuers_cache() {
+        let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        std::fs::create_dir(&dir).unwrap();
+        let settings = Settings { config: dir.join("client.json") };
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let slow = format!("http://{}", listener.local_addr().unwrap());
+        let fast = "http://127.0.0.1:1".to_owned();
+        settings.save_key("fixture", vec![slow.clone(), fast.clone()]).unwrap();
+        let session = settings.sessions().unwrap().entries[&fast].clone();
+        let devices = Devices::new(Api::new(&Config::default()).unwrap(), &settings).unwrap();
+        let device_id = devices.state.lock().unwrap().inherited.device_id;
+        devices.state.lock().unwrap().entries.insert(fast.clone(), Entry {
+            session: session.clone(),
+            lease: Lease { device_id, generation: 1, token: "cached".into(), expires_at: time()+300 },
+        });
+        let (pending_tx,pending_rx) = mpsc::channel();
+        let (finish_tx,finish_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            scope.spawn(move || {
+                let (mut socket,_) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&socket).read_line(&mut line).unwrap();
+                assert!(line.starts_with("POST /v1/auth/device/claim "));
+                pending_tx.send(()).unwrap();
+                finish_rx.recv_timeout(Duration::from_secs(3)).ok();
+                let _ = socket.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\n\r\n");
+            });
+            let slow_request = scope.spawn(|| devices.claim(&slow, &session, false));
+            pending_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let (done_tx,done_rx) = mpsc::channel();
+            let d = &devices;
+            let s = &session;
+            scope.spawn(move || done_tx.send(d.claim(&fast,s,false)).unwrap());
+            let fast_result = done_rx.recv_timeout(Duration::from_secs(1));
+            finish_tx.send(()).unwrap();
+            assert_eq!(fast_result.unwrap().unwrap().as_deref(), Some("cached"));
+            assert!(slow_request.join().unwrap().is_err());
+        });
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

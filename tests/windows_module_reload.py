@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import select
 import socket
 import socketserver
 import ssl
@@ -69,6 +70,34 @@ def wait(check):
             last = exc
         time.sleep(.1)
     raise RuntimeError("fixture readiness timed out") from last
+
+
+@contextlib.contextmanager
+def delayed_gateway(upstream_port, gate):
+    """Expose the ingress after a direct stream attempt, regardless of probe timing."""
+    class Forward(socketserver.BaseRequestHandler):
+        def handle(self):
+            if not gate.wait(12):
+                return
+            with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1",upstream_port),5) as upstream:
+                sockets = [self.request,upstream]
+                while True:
+                    ready,_,_ = select.select(sockets,[],[],20)
+                    if not ready:
+                        return
+                    for source in ready:
+                        data = source.recv(65536)
+                        if not data:
+                            return
+                        sockets[1-sockets.index(source)].sendall(data)
+    with socketserver.ThreadingTCPServer(("127.0.0.1",0),Forward) as server:
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        try:
+            yield server.server_address[1]
+        finally:
+            gate.set()
+            server.shutdown()
 
 
 class Echo(socketserver.BaseRequestHandler):
@@ -275,6 +304,67 @@ def test(folder):
                     route=json.load(response)["last_route"]
                 assert route["origin"]==origin and route["via"]=="through_ru",route
                 print(f"Auto: authenticated Direct stalled, ingress CONNECT in {elapsed:.2f}s, echoed 40000 bytes",flush=True)
+        # Fast discovery is insufficient: the data-plane open can still time out.
+        # Use anonymous loopback fixtures and real authenticated ingress for the echo.
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        info = json.dumps(dict(request("/v1/auth/info", token=token), device_leases=False)).encode()
+        attempted = []
+        first_attempt = threading.Event()
+        class DeadStream(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(info)
+            def do_POST(self):
+                assert self.path == "/v1/infinity/streams"
+                attempted.append(self.server.server_port)
+                first_attempt.set()
+                time.sleep(3)
+            def log_message(self, *args):
+                pass
+
+        with contextlib.ExitStack() as stack:
+            urls = []
+            for _ in range(3):
+                server = stack.enter_context(ThreadingHTTPServer(("127.0.0.1",0),DeadStream))
+                threading.Thread(target=server.serve_forever,daemon=True).start()
+                stack.callback(server.shutdown)
+                url = f"http://127.0.0.1:{server.server_port}"
+                saved["entries"][url] = saved["entries"][origin].copy()
+                urls.append(url)
+            delayed_port = stack.enter_context(delayed_gateway(port,first_attempt))
+            delayed = f"https://127.0.0.1:{delayed_port}"
+            saved["entries"][delayed] = saved["entries"][origin].copy()
+            sessions.write_text(json.dumps(saved))
+            run(CORE,"config","set","request_timeout_ms","1000")
+            for ingress, works in [(delayed, True), (urls[-1], False)]:
+                attempted.clear()
+                env.update(GARLIC_STORAGE_URLS=",".join(urls[:2]),GARLIC_CONTROL_URLS=ingress)
+                proxy_port = free_port()
+                with process(CORE,"proxy","--bind",f"127.0.0.1:{proxy_port}"):
+                    wait(ready)
+                    time.sleep(.7)
+                    with socket.create_connection(("127.0.0.1",proxy_port),8) as conn:
+                        conn.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+                        with conn.makefile("rb",buffering=0) as head:
+                            status_line = head.readline()
+                            assert (b" 200 " if works else b" 502 ") in status_line, status_line
+                            while head.readline() not in (b"",b"\r\n"): pass
+                        if works:
+                            roundtrip(conn)
+                            assert len(attempted)==1, attempted
+                        else:
+                            assert len(set(attempted)) == 3 and server.server_port in attempted[:2], attempted
+                    if works:
+                        with socket.create_connection(("127.0.0.1",proxy_port),8) as conn:
+                            conn.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+                            with conn.makefile("rb",buffering=0) as head:
+                                assert b" 200 " in head.readline()
+                                while head.readline() not in (b"",b"\r\n"): pass
+                            roundtrip(conn)
+                        assert len(attempted)==1, attempted
+                    print("PASS stream-open timeout, ingress echo" if works else "PASS both paths down, 502",flush=True)
+        run(CORE,"config","set","request_timeout_ms","5000")
         publish([{"version":128,"frame":"tlv","body":"selective-ack"}])
         wait(lambda: request("/v1/auth/info",token=token).get("exchange_module_versions")==[128])
         custom_lane(port, ctx, token, True)

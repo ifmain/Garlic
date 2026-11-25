@@ -34,11 +34,11 @@ rustup target add x86_64-pc-windows-msvc
 | `APKTOOL_JAR` | Файл `apktool_3.0.3.jar` |
 
 ```sh
-rustup target add aarch64-linux-android armv7-linux-androideabi
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 python apps/android/build.py
 ```
 
-Сборка компилирует ядро Rust и JNI-библиотеку для ARM64 и ARMv7, собирает интерфейс из Smali, Java и ресурсов в `apps/android`, подписывает APK локальным тестовым ключом и проверяет подпись. Результат — `dist/garlic-alpha.apk`. Сохраните `target/android/debug.p12` для последующих обновлений своей сборки. APK с локальной подписью устанавливается поверх приложения с такой же подписью. Закрытый ключ опубликованного релиза хранится отдельно.
+Сборка компилирует ядро Rust и JNI-библиотеку для ARM64, ARMv7 и x86_64, собирает интерфейс из Smali, Java и ресурсов в `apps/android`, подписывает APK локальным тестовым ключом и проверяет подпись. Результат — `dist/garlic-alpha.apk`. Сохраните `target/android/debug.p12` для последующих обновлений своей сборки. APK с локальной подписью устанавливается поверх приложения с такой же подписью. Закрытый ключ опубликованного релиза хранится отдельно.
 
 ## Где менять код
 

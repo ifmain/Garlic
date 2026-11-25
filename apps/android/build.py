@@ -39,6 +39,7 @@ def main():
         shutil.copytree(APP / "app", app)
         for abi, triple, compiler in [
             ("arm64-v8a", "aarch64-linux-android", "aarch64-linux-android"),
+            ("x86_64", "x86_64-linux-android", "x86_64-linux-android"),
             ("armeabi-v7a", "armv7-linux-androideabi", "armv7a-linux-androideabi"),
         ]:
             key = triple.replace("-", "_")

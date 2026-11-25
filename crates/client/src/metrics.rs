@@ -46,6 +46,9 @@ impl Metrics {
         self.active.fetch_add(1, Ordering::Relaxed);
         Active(&self.active)
     }
+    pub fn last_origin(&self) -> Option<String> {
+        self.recent.lock().unwrap().last["origin"].as_str().map(str::to_owned)
+    }
     pub fn failed(&self) {
         self.failed.fetch_add(1, Ordering::Relaxed);
     }
