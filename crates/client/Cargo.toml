@@ -21,13 +21,16 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(any(target_os = "android", windows))'.dependencies]
 tun = { version = "=0.8.14", features = ["async"] }
 tun2proxy = { version = "=0.8.7", default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util"] }
+
 
 [[bin]]
 name = "garlic-internal-network"
 path = "src/main.rs"
 
 [dependencies]
+tokio = { version = "1", features = ["rt-multi-thread","macros","net","time","io-util"] }
+tokio-rustls = {version="0.26",default-features=false,features=["ring","tls12"]}
+russh = {version="=0.65.4",default-features=false,features=["ring"]}
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 base64 = "0.22"
 jni-sys = { version = "=0.4.1", optional = true }

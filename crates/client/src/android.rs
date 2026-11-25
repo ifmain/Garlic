@@ -82,6 +82,10 @@ fn profile(dir: &str) -> Result<Settings, StateError> {
         config: path.join("client.json"),
     })
 }
+entry!(Java_org_garlic_client_PluginPage_testPeer,(dir,id,kind,address),{
+    proxy::test_peer(&profile(&dir)?,&id,&kind,&address)?;
+    Ok(json!({"ok":true}))
+});
 fn urls(value: &str) -> Result<Vec<String>, StateError> {
     let mut out = Vec::new();
     for raw in value.split(',').map(str::trim).filter(|v| !v.is_empty()) {

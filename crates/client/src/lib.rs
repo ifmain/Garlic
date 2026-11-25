@@ -62,6 +62,10 @@ pub fn run(args: &[&str]) -> Result<Value, StateError> {
                 settings.edit(|cfg| cfg.set(name, value))?,
             )?)
         }
+        ["plugin-test",id,kind,address]=>{
+            proxy::test_peer(&settings,id,kind,address)?;
+            return Ok(serde_json::json!({"ok":true}))
+        }
         ["plugin-slot-key",id,url,"--key-stdin"]=>{
             let slot=proxy::slot_path(&settings,id)?;
             if !slot.side("gpf-module").is_file(){return Err("plugin is not installed".into())}

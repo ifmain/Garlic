@@ -74,10 +74,11 @@ public final class PluginFiles {
                 }catch(Exception e){toast(a,"Установка не удалась");}finally{a.selected=null;a.render();}
             }).show();
     }
-    static String address(String value) throws JSONException {
+    static String address(String value) throws JSONException { return address(value,"direct"); }
+    static String address(String value,String kind) throws JSONException {
         try {
             java.net.URI u=new java.net.URI(value);
-            if (!"https".equals(u.getScheme()) || u.getHost()==null || u.getUserInfo()!=null || u.getQuery()!=null ||
+            if (!(kind.equals("direct") || kind.equals("ingress") ? "https" : kind).equals(u.getScheme()) || u.getHost()==null || u.getUserInfo()!=null || u.getQuery()!=null ||
                 u.getFragment()!=null || !(u.getPath().isEmpty()||u.getPath().equals("/")) || u.getPort()>65535 || u.getPort()==0 || value.length()>240)
                 throw new Exception();
             return value.endsWith("/")?value.substring(0,value.length()-1):value;
@@ -101,8 +102,8 @@ public final class PluginFiles {
         if(rows.length()>24)throw new JSONException("connections");
         for(int i=0;i<rows.length();i++){
             JSONObject row=rows.getJSONObject(i);
-            if(row.length()!=2 || !("direct".equals(row.get("kind")) || "ingress".equals(row.get("kind")))) throw new JSONException("kind");
-            row.put("address",address(row.getString("address")));
+            if(row.length()!=2 || !java.util.Arrays.asList(PluginPage.KINDS).contains(row.getString("kind"))) throw new JSONException("kind");
+            row.put("address",address(row.getString("address"),row.getString("kind")));
         }
         return v.put("connections",rows).put("format","garlic-plugin-data/1");
     }
@@ -130,6 +131,37 @@ public final class PluginFiles {
     static void show(Activity a) {
         a.startActivity(new Intent(a,PluginPage.class));
     }
+    static void importSettings(Activity a, String input) throws Exception {
+        JSONObject document = new JSONObject(input);
+        Object supplied = document.remove("credentials");
+        JSONObject settings = parse(document.toString());
+        if (!manifest(a).getString("id").equals(settings.getString("id"))) throw new IOException();
+        if (supplied != null) {
+            if (!(supplied instanceof JSONObject)) throw new IOException();
+            JSONObject creds = (JSONObject)supplied;
+            AtomicFile store = new AtomicFile(new File(folder(a), "client.connector-login"));
+            JSONObject saved = store.getBaseFile().exists() ? new JSONObject(read(store.openRead())) : new JSONObject();
+            JSONArray rows = settings.getJSONArray("connections");
+            java.util.Set<String> allowed = new java.util.HashSet<>();
+            for (int i=0; i<rows.length(); i++) {
+                JSONObject row=rows.getJSONObject(i);
+                if (!row.getString("kind").matches("direct|ingress")) allowed.add(row.getString("address"));
+            }
+            for (java.util.Iterator<String> it=creds.keys(); it.hasNext();) {
+                String endpoint=it.next();
+                if (!allowed.contains(endpoint)) throw new IOException();
+                JSONObject login=creds.getJSONObject(endpoint);
+                if (login.length()!=3) throw new IOException();
+                for (String field:new String[]{"user","password","pin"})
+                    if (!(login.get(field) instanceof String)) throw new IOException();
+                saved.put(endpoint,login);
+            }
+            FileOutputStream out=store.startWrite();
+            try {out.write(saved.toString().getBytes(StandardCharsets.UTF_8));store.finishWrite(out);}
+            catch(Exception e){store.failWrite(out);throw e;}
+        }
+        save(a,settings);
+    }
     static void result(Activity a,int request,int result,Intent data) {
         if(request<INSTALL || request>EXPORT || result!=Activity.RESULT_OK || data==null || data.getData()==null) return;
         new Thread(() -> {
@@ -145,7 +177,7 @@ public final class PluginFiles {
                 } else {
                     String input=read(a.getContentResolver().openInputStream(data.getData()));
                     if(request==INSTALL){a.runOnUiThread(()->{try{importPackage((PluginPage)a,input);}catch(Exception e){toast(a,"Неверный пакет или подпись");}});return;}
-                    else {JSONObject imported=parse(input);if(!manifest(a).getString("id").equals(imported.getString("id")))throw new IOException();save(a,imported);}
+                    else {importSettings(a,input);}
                 }
                 a.runOnUiThread(() -> { if(a instanceof PluginPage)((PluginPage)a).render(); toast(a,request==EXPORT?"Данные сохранены":"Готово"); });
             } catch(Exception e) { a.runOnUiThread(() -> toast(a,"Ошибка файла плагина")); }

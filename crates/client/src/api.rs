@@ -29,7 +29,7 @@ fn vpn_bootstrap_keeps_usable_routes_and_pins_exchange_socket() {
         storage_urls: vec!["https://127.0.0.1:18443".into()],
         ..Config::default()
     };
-    let (api, bypass) = Api::for_windows_vpn(&mut config).unwrap();
+    let (api, bypass) = Api::for_windows_vpn(&mut config,false).unwrap();
     assert_eq!(config.control_urls, ["https://198.51.100.2:8443"]);
     assert_eq!(config.storage_urls, ["https://127.0.0.1:18443"]);
     assert_eq!(bypass, BTreeSet::from([Ipv4Addr::new(198, 51, 100, 2)]));
@@ -101,7 +101,7 @@ impl Api {
 
     #[cfg(windows)]
     pub(crate) fn for_windows_vpn(
-        cfg: &mut Config,
+        cfg: &mut Config, allow_plugin_only:bool,
     ) -> Result<(Self, BTreeSet<Ipv4Addr>), StateError> {
         use std::net::IpAddr;
 
@@ -141,7 +141,7 @@ impl Api {
                 })
             });
         }
-        if bootstrap.is_empty() {
+        if bootstrap.is_empty() && !allow_plugin_only {
             return Err("no usable bootstrap address for the configured VPN routes".into());
         }
         Ok((

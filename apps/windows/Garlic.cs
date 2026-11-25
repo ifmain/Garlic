@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -1170,7 +1170,7 @@ public sealed class GarlicApp
             };
         }
         C<Button>("PluginsButton").Click += delegate {
-            PluginFiles.Show(window, C<Button>("PluginsButton"), Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"), Say, async (id,url,key) => { await Cli(id==null?new[]{"plugin-key",url,"--key-stdin"}:new[]{"plugin-slot-key",id,url,"--key-stdin"},key); });
+            PluginFiles.Show(window, C<Button>("PluginsButton"), Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"), Say, async (id,kind,address)=>{await Cli(new[]{"plugin-test",id,kind,address});}, async (id,url,key) => { await Cli(id==null?new[]{"plugin-key",url,"--key-stdin"}:new[]{"plugin-slot-key",id,url,"--key-stdin"},key); });
         };
         var channelButton = C<Button>("ChannelButton");
         channelButton.Visibility = Visibility.Visible;
@@ -1715,7 +1715,11 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
+#if GARLIC_PLUGIN_PREVIEW
+    internal const string Version = "0.9.17.2";
+#else
     internal const string Version = "0.9.17";
+#endif
 #else
     internal const string Version = "0.9.2";
 #endif

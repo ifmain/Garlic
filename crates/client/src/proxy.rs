@@ -26,6 +26,7 @@ use std::{
 use uuid::Uuid;
 
 mod health;
+mod connector;
 
 struct Endpoint {
     slot: Option<String>,
@@ -38,6 +39,7 @@ struct Proxy {
     api: Api,
     devices: Devices,
     endpoints: Vec<Endpoint>,
+    peers: Vec<connector::Peer>,
     required_exit: Option<String>,
     health: health::RouteHealth,
     hooks: Vec<(String,release_cache::guest::Guest)>,
@@ -135,7 +137,7 @@ impl Proxy {
         let mut value = self.metrics.status(
             &self.traffic,
             self.address,
-            self.endpoints.iter().map(|e| (e.url.as_str(), e.route)),
+            self.endpoints.iter().map(|e| (e.url.as_str(), e.route)).chain(self.peers.iter().map(|p|(p.address.as_str(),Route::Direct))),
             &self.failed.lock().unwrap(),
             self.cooldown,
         );
@@ -330,6 +332,12 @@ impl Proxy {
         let _active = self.metrics.begin();
         let mut order: Vec<_> = self.endpoints.iter().collect();
         self.health.order(&mut order, &self.failed, self.cooldown);
+        if !self.peers.is_empty() {
+            let failed=self.failed.lock().unwrap();
+            if self.peers.iter().any(|p|failed.get(&p.address).is_none_or(|t|t.elapsed()>=self.cooldown)){
+                order.retain(|e|failed.get(&e.url).is_none_or(|t|t.elapsed()>=self.cooldown));
+            }
+        }
         let mut last_error: StateError = "no authenticated route available".into();
         let mut attempt=0;
         while !order.is_empty() {
@@ -388,6 +396,33 @@ impl Proxy {
                 }
             }
         }
+        // A stream is retried only before acknowledging the local CONNECT request.
+        // Authentication/authorization failures are terminal, including on the last Garlic route.
+        if self.required_exit.is_none() && garlic_client_logic::retry_allowed(Some(&last_error.to_string())) {
+            let mut peers=self.peers.iter().collect::<Vec<_>>();
+            {
+                let failed=self.failed.lock().unwrap();
+                peers.sort_by_key(|p|failed.get(&p.address).is_some_and(|t|t.elapsed()<self.cooldown));
+            }
+            for peer in peers {
+                let started=Instant::now();
+                match peer.open(&dest) {
+                    Ok(stream)=>{
+                        self.failed.lock().unwrap().remove(&peer.address);
+                        self.metrics.opened(&peer.address,Route::Direct,&Value::Null,started.elapsed().as_millis() as u64,
+                            match peer.kind.as_str(){"http"=>"HTTP","https"=>"HTTPS","socks4"=>"SOCKS4","socks5"=>"SOCKS5",_=>"SSH"},0,&Value::Null);
+                        if socks { local.write_all(&[5,0,0,1,0,0,0,0,0,0])?; }
+                        else {local.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;}
+                        return stream.relay(&local,self);
+                    }
+                    Err(e)=>{
+                        self.failed.lock().unwrap().insert(peer.address.clone(),Instant::now());
+                        self.metrics.route_error(&peer.address,Route::Direct,&e.to_string());
+                        last_error=e;
+                    }
+                }
+            }
+        }
         self.metrics.failed();
         if socks {
             local.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0])?;
@@ -416,7 +451,7 @@ pub(crate) fn slot_path(settings:&Settings,id:&str)->Result<Settings,StateError>
     Ok(Settings{config:settings.config.with_file_name("plugins-v3").join(format!("s-{id}")).join("client.json")})
 }
 struct NetworkSlot {
-    id:String, guest:release_cache::guest::Guest, endpoints:Vec<Endpoint>
+    id:String, guest:release_cache::guest::Guest, endpoints:Vec<Endpoint>, peers:Vec<connector::Peer>
 }
 fn network_slots(settings:&Settings)->Vec<NetworkSlot>{
     if !cfg!(feature="alpha"){return Vec::new()}
@@ -434,7 +469,7 @@ fn network_slots(settings:&Settings)->Vec<NetworkSlot>{
         if m["id"]!=id || m["format"]!="gpf/3" || m["capability"]!="network" || d["id"]!=id || d["enabled"]!=true{return None}
         let guest=release_cache::guest::Guest::load(m["wasm"].as_str()?).ok()?;
         guest.call("route_next",(1,0,0)).ok()?;
-        let keys=plugin_store(&slot).sessions().ok()?;
+        let keys=plugin_store(&slot).sessions().unwrap_or_default();
         let endpoints=d["connections"].as_array()?.iter().take(24).filter_map(|row|{
             let url=crate::settings::origin(row["address"].as_str()?).ok()?;
             let session=keys.entries.get(&url)?.clone();
@@ -442,8 +477,30 @@ fn network_slots(settings:&Settings)->Vec<NetworkSlot>{
             let route=match row["kind"].as_str()?{"direct"=>Route::Direct,"ingress"=>Route::ThroughRu,_=>return None};
             Some(Endpoint{url,route,session,slot:Some(id.clone())})
         }).collect();
-        Some(NetworkSlot{id,guest,endpoints})
+        let secrets=read("connector-login").unwrap_or(Value::Null);
+        let peers=d["connections"].as_array()?.iter().take(24).filter_map(|row|{
+            let kind=row["kind"].as_str()?;let address=row["address"].as_str()?;
+            let code=connector::code(kind)?;
+            if !m["transports"].as_array()?.iter().any(|v|v.as_str()==Some(kind)){return None}
+            if guest.call("route_transport",(code,0,0)).ok()!=Some(code){return None}
+            let login:connector::Login=serde_json::from_value(secrets[address].clone()).unwrap_or_default();
+            #[cfg(windows)]
+            let login=connector::Login{password:crate::settings::windows::decode(&login.password).ok()?,..login};
+            connector::Peer::new(&id,kind,address,login).ok()
+        }).collect();
+        Some(NetworkSlot{id,guest,endpoints,peers})
     }).take(16).collect()
+}
+pub(crate) fn test_peer(settings:&Settings,id:&str,kind:&str,address:&str)->Result<(),StateError>{
+    let slot=network_slots(settings).into_iter().find(|s|s.id==id).ok_or("enable the network plugin first")?;
+    slot.peers.into_iter().find(|p|p.kind==kind && p.address==address).ok_or("save the connection first")?.test()
+}
+#[cfg(windows)]
+pub(crate) fn peer_bypass(settings:&Settings)->(bool,std::collections::BTreeSet<std::net::Ipv4Addr>){
+    use std::net::ToSocketAddrs;
+    let peers:Vec<_>=network_slots(settings).into_iter().flat_map(|s|s.peers).collect();
+    (!peers.is_empty(),peers.into_iter().filter_map(|p|(p.host.as_str(),p.port).to_socket_addrs().ok())
+        .flatten().filter_map(|a|match a.ip(){std::net::IpAddr::V4(ip) if !ip.is_loopback()=>Some(ip),_=>None}).collect())
 }
 pub(crate) fn apply_connections(settings: &Settings, cfg: &mut Config) -> Result<(), StateError> {
     apply_legacy_connections(settings,cfg)?;
@@ -553,8 +610,10 @@ fn serve_inner(
             }
         }
     }
+    let mut peers=Vec::new();
     let mut hooks=Vec::new();
     for slot in network_slots(settings) {
+        if required_exit.is_none(){peers.extend(slot.peers);}
         hooks.push((slot.id,slot.guest));
         endpoints.extend(slot.endpoints.into_iter().filter(|e|{
             let allowed=if e.route==Route::Direct {cfg.mode!="ru" && cfg.storage_urls.contains(&e.url)}
@@ -562,7 +621,7 @@ fn serve_inner(
             allowed
         }));
     }
-    if endpoints.is_empty() {
+    if endpoints.is_empty() && peers.is_empty() {
         return Err("no valid user session for the configured routes".into());
     }
     let listener = TcpListener::bind(address)?;
@@ -575,6 +634,7 @@ fn serve_inner(
         health: health::RouteHealth::new(cfg.mode == "auto" && endpoints.len() > 1,
             &settings.side("installed-gpf")),
         endpoints,
+        peers,
         hooks,
         required_exit,
         failed: Default::default(),

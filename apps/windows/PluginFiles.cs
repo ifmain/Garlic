@@ -12,6 +12,8 @@ using Microsoft.Win32;
 
 internal static class PluginFiles
 {
+    static readonly string[] Kinds={"direct","ingress","http","https","socks4","socks5","ssh"};
+    static readonly string[] Names={"Garlic · напрямую","Garlic · входная нода","HTTP CONNECT","HTTPS CONNECT","SOCKS4 / 4a","SOCKS5","SSH-туннель"};
     const string DataFormat = "garlic-plugin-data/1";
     internal static Dictionary<string,object> Parse(string json) {
         var v = new JavaScriptSerializer { MaxJsonLength = 8192, RecursionLimit = 4 }
@@ -28,8 +30,8 @@ internal static class PluginFiles
             if(items==null || items.Count>24)throw new InvalidDataException();
             foreach(var item in items){
                 var row=item as Dictionary<string,object>;
-                if(row==null || row.Count!=2 || !(Equals(row["kind"],"direct") || Equals(row["kind"],"ingress")))throw new InvalidDataException();
-                row["address"]=Address(row["address"] as string);rows.Add(row);
+                if(row==null || row.Count!=2 || !Kinds.Contains(row["kind"] as string))throw new InvalidDataException();
+                row["address"]=Address(row["address"] as string,(string)row["kind"]);rows.Add(row);
             }
         }
         v["connections"]=rows;
@@ -50,6 +52,34 @@ internal static class PluginFiles
         var validated=Parse(serializer.Serialize(opts));
         if(File.Exists(path)){validated=Parse(Read(path));if(!Equals(validated["id"],m["id"]))throw new InvalidDataException();}
         Save(path,validated);Save(Path.ChangeExtension(path,"gpf-module"),m);
+    }
+    internal static void ImportSettings(string path,string module,string input) {
+        var json=new JavaScriptSerializer{MaxJsonLength=8192,RecursionLimit=8};
+        var document=json.Deserialize<Dictionary<string,object>>(input);
+        object supplied;
+        bool hasCredentials=document.TryGetValue("credentials",out supplied);
+        document.Remove("credentials");
+        var settings=Parse(json.Serialize(document));
+        if(!Equals(settings["id"],Manifest(module)["id"]))throw new InvalidDataException();
+        if(hasCredentials) {
+            var creds=supplied as Dictionary<string,object>;
+            if(creds==null)throw new InvalidDataException();
+            string file=Path.ChangeExtension(path,"connector-login");
+            var saved=File.Exists(file)?Manifest(file):new Dictionary<string,object>();
+            var allowed=new HashSet<string>(((List<Dictionary<string,object>>)settings["connections"])
+                .Where(row=>!Equals(row["kind"],"direct") && !Equals(row["kind"],"ingress")).Select(row=>(string)row["address"]));
+            foreach(var item in creds) {
+                var login=item.Value as Dictionary<string,object>;
+                if(!allowed.Contains(item.Key) || login==null || login.Count!=3 ||
+                   new[]{"user","password","pin"}.Any(k=>!login.ContainsKey(k) || !(login[k] is string)))throw new InvalidDataException();
+                string password=(string)login["password"];
+                if(password.Length>0)login["password"]="dpapi:"+Convert.ToBase64String(System.Security.Cryptography.ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(password),null,System.Security.Cryptography.DataProtectionScope.CurrentUser)).TrimEnd('=').Replace('+','-').Replace('/','_');
+                saved[item.Key]=login;
+            }
+            Save(file,saved);
+        }
+        Save(path,settings);
     }
     static string Library(string config){return Path.Combine(Path.GetDirectoryName(config),"plugins-v3");}
     static IEnumerable<string> Slots(string config) {
@@ -96,14 +126,14 @@ internal static class PluginFiles
             if(File.Exists(path)) File.Replace(tmp,path,null); else File.Move(tmp,path);
         } finally { if(File.Exists(tmp)) File.Delete(tmp); }
     }
-    static string Address(string value) {
+    static string Address(string value,string kind="direct") {
         Uri u;
         if(value==null || value.Length>240 || !Uri.TryCreate(value,UriKind.Absolute,out u) ||
-           u.Scheme!="https" || u.Host.Length==0 || u.UserInfo!="" || u.AbsolutePath!="/" ||
+           u.Scheme!=(kind=="direct"||kind=="ingress"?"https":kind) || u.Host.Length==0 || u.UserInfo!="" || (u.AbsolutePath!="/" && u.AbsolutePath!="") ||
            u.Query!="" || u.Fragment!="" || u.Port==0) throw new InvalidDataException();
         return u.GetLeftPart(UriPartial.Authority);
     }
-    internal static void Show(Window owner,Button button,string config,Action<string> status,Func<string,string,string,System.Threading.Tasks.Task> storeKey) {
+    internal static void Show(Window owner,Button button,string config,Action<string> status,Func<string,string,string,System.Threading.Tasks.Task> test,Func<string,string,string,System.Threading.Tasks.Task> storeKey) {
         string path=Path.ChangeExtension(config,"installed-gpf");
         var host=(Grid)((FrameworkElement)owner.FindName("Auth")).Parent;
         var previous=host.Children.OfType<ScrollViewer>().FirstOrDefault(x=>Equals(x.Tag,"plugins"));
@@ -140,7 +170,7 @@ internal static class PluginFiles
             action(panel,"‹  Плагины",delegate{details=false;refresh();});label((string)manifest["name"],28);
             Action import=delegate {
                 var d=new OpenFileDialog{Filter="JSON|*.json"};
-                if(d.ShowDialog(owner)==true && File.Exists(path)){var imported=Parse(Read(d.FileName));if(!Equals(imported["id"],Manifest(module)["id"]))throw new InvalidDataException();Save(path,imported);refresh();}
+                if(d.ShowDialog(owner)==true && File.Exists(path)){ImportSettings(path,module,Read(d.FileName));refresh();}
             };
             Dictionary<string,object> v;
             try{v=Parse(Read(path));}catch{label("Настройки повреждены",16);action(panel,"Импорт JSON",import);return;}
@@ -149,29 +179,51 @@ internal static class PluginFiles
             }else{
             var rows=(List<Dictionary<string,object>>)v["connections"];
             label("Подключения",20);label("Изменения применятся при следующем подключении.",14);
+            var transportList=manifest.ContainsKey("transports")?manifest["transports"] as IList:null;
+            var kinds=Kinds.Where((k,i)=>i<2 || (transportList!=null && transportList.Contains(k))).ToArray();
+            string secretPath=Path.ChangeExtension(path,"connector-login");
+            var secrets=File.Exists(secretPath)?Manifest(secretPath):new Dictionary<string,object>();
             Action<int> editor=index=>{
                 panel.Children.Clear();label(index<0?"Добавить подключение":"Подключение",26);
-                label("Тип подключения",15);var kind=new ComboBox{ItemsSource=new[]{"Garlic · напрямую","Garlic · входная нода"},SelectedIndex=index<0 || Equals(rows[index]["kind"],"direct")?0:1};panel.Children.Add(kind);
+                label("Тип подключения",15);var kind=new ComboBox{ItemsSource=kinds.Select(k=>Names[Array.IndexOf(Kinds,k)]).ToList(),SelectedIndex=index<0?0:Array.IndexOf(kinds,(string)rows[index]["kind"])};panel.Children.Add(kind);
                 label("Адрес сервера",15);var addr=new TextBox{Text=index<0?"":(string)rows[index]["address"],ToolTip="https://server.example:8443"};panel.Children.Add(addr);
-                label("Ключ Garlic",15); var key=new PasswordBox{ToolTip="Оставьте пустым, чтобы использовать сохранённый ключ"};panel.Children.Add(key);
+                label("Пользователь прокси / SSH",15);var user=new TextBox();panel.Children.Add(user);
+                label("Отпечаток SSH (SHA256:…) или свой CA для HTTPS (DER в Base64)",15);var pin=new TextBox();panel.Children.Add(pin);
+                if(index>=0 && secrets.ContainsKey((string)rows[index]["address"])){
+                    var login=(Dictionary<string,object>)secrets[(string)rows[index]["address"]];user.Text=(string)login["user"];pin.Text=(string)login["pin"];
+                }
+                label("Ключ Garlic или пароль подключения",15); var key=new PasswordBox{ToolTip="Оставьте пустым, чтобы использовать сохранённый ключ"};panel.Children.Add(key);
                 var submit=new Button{Content="Сохранить",Margin=new Thickness(0,8,0,4)};panel.Children.Add(submit);
                 submit.Click+=async delegate{submit.IsEnabled=false;try{
-                    var item=new Dictionary<string,object>{{"kind",kind.SelectedIndex==0?"direct":"ingress"},{"address",Address(addr.Text.Trim())}};
+                    string type=kinds[kind.SelectedIndex];string endpoint=Address(addr.Text.Trim(),type);
+                    var item=new Dictionary<string,object>{{"kind",type},{"address",endpoint}};
                     if(index<0 && rows.Count>=24)throw new InvalidDataException();
-                    if(key.Password.Length>0){await storeKey(manifest.ContainsKey("capability")?(string)manifest["id"]:null,(string)item["address"],key.Password);key.Clear();}
+                    if(kind.SelectedIndex>=2){
+                        var oldLogin=secrets.ContainsKey(endpoint)?(Dictionary<string,object>)secrets[endpoint]:null;
+                        secrets[endpoint]=new Dictionary<string,object>{{"user",user.Text},{"pin",pin.Text.Trim()},{"password",key.Password.Length>0?"dpapi:"+Convert.ToBase64String(System.Security.Cryptography.ProtectedData.Protect(Encoding.UTF8.GetBytes(key.Password),null,System.Security.Cryptography.DataProtectionScope.CurrentUser)).TrimEnd('=').Replace('+','-').Replace('/','_'):oldLogin!=null && Equals(oldLogin["user"],user.Text)?oldLogin["password"]:""}};
+                        Save(secretPath,secrets);
+                    }else if(key.Password.Length>0){await storeKey(manifest.ContainsKey("capability")?(string)manifest["id"]:null,(string)item["address"],key.Password);key.Clear();}
                     if(index<0){rows.Add(item);}else rows[index]=item;
                     Save(path,v);refresh();
                 }catch{status("Не удалось сохранить подключение. Проверьте адрес и ключ.");}finally{submit.IsEnabled=true;}};
                 if(index>=0)action(panel,"Удалить подключение",delegate{rows.RemoveAt(index);Save(path,v);refresh();});
                 action(panel,"Отмена",refresh);
             };
-            for(int i=0;i<rows.Count;i++){int index=i;action(panel,(Equals(rows[i]["kind"],"direct")?"Напрямую":"Входная нода")+"   ·   "+rows[i]["address"],()=>editor(index));}
+            for(int i=0;i<rows.Count;i++){int index=i;action(panel,Names[Array.IndexOf(Kinds,(string)rows[i]["kind"])]+"   ·   "+rows[i]["address"],()=>editor(index));
+                if(Array.IndexOf(Kinds,(string)rows[i]["kind"])>=2){
+                    var probe=new Button{Content="Протестировать"};panel.Children.Add(probe);
+                    probe.Click+=async delegate{probe.IsEnabled=false;probe.Content="Проверяем…";try{
+                        await test((string)manifest["id"],(string)rows[index]["kind"],(string)rows[index]["address"]);
+                        probe.Content="● Работает";probe.Foreground=Brushes.LightGreen;
+                    }catch(Exception ex){probe.Content="● Ошибка: "+ex.Message;probe.Foreground=Brushes.Salmon;}finally{probe.IsEnabled=true;}};
+                }
+            }
             action(panel,"＋  Добавить подключение",()=>editor(-1));
             }
             label("Данные плагина",20);var files=new WrapPanel();panel.Children.Add(files);
             action(files,"Импорт JSON",import);
             action(files,"Экспорт JSON",delegate{var d=new SaveFileDialog{Filter="JSON|*.json",FileName="plugin-data.json"};if(d.ShowDialog(owner)==true)Save(d.FileName,v);});
-            action(panel,"Удалить плагин",delegate{if(MessageBox.Show(owner,"Удалить плагин и его настройки?","Плагины",MessageBoxButton.YesNo)==MessageBoxResult.Yes){File.Delete(Path.Combine(Path.GetDirectoryName(path),"plugin","client.sessions.json"));File.Delete(module);File.Delete(path);details=false;refresh();}});
+            action(panel,"Удалить плагин",delegate{if(MessageBox.Show(owner,"Удалить плагин и его настройки?","Плагины",MessageBoxButton.YesNo)==MessageBoxResult.Yes){File.Delete(Path.Combine(Path.GetDirectoryName(path),"plugin","client.sessions.json"));File.Delete(Path.ChangeExtension(path,"connector-login"));File.Delete(module);File.Delete(path);details=false;refresh();}});
         };
         refresh();
     }

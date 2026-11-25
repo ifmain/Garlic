@@ -12,7 +12,7 @@ use std::{
 use uuid::Uuid;
 
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 
 pub fn time() -> u64 {
     SystemTime::now()

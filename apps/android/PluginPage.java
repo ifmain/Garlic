@@ -10,6 +10,9 @@ import android.widget.*;
 import org.json.*;
 
 public final class PluginPage extends Activity {
+    static final String[] KINDS={"direct","ingress","http","https","socks4","socks5","ssh"};
+    static final String[] NAMES={"Garlic · напрямую","Garlic · входная нода","HTTP CONNECT","HTTPS CONNECT","SOCKS4 / 4a","SOCKS5","SSH-туннель"};
+    private static native String testPeer(String dir,String slot,String kind,String address);
     private LinearLayout page;
     String selected;
     private boolean details;
@@ -65,35 +68,57 @@ public final class PluginPage extends Activity {
             label("Подключения",20);label("Используются при следующем подключении.",14);
             JSONArray rows=config.getJSONArray("connections");
             for(int i=0;i<rows.length();i++){final int index=i;JSONObject row=rows.getJSONObject(i);label(row.getString("address"),16);
-                button(page,(row.getString("kind").equals("direct")?"Напрямую":"Через входную ноду")+"   ·   Изменить",()->editor(index));}
+                String type=row.getString("kind");button(page,NAMES[java.util.Arrays.asList(KINDS).indexOf(type)]+"   ·   Изменить",()->editor(index));
+                if(java.util.Arrays.asList(KINDS).indexOf(type)>=2){
+                    final String slot=selected,dir=PluginFiles.folder(this,null).getAbsolutePath(),endpoint=row.getString("address");
+                    Button probe=button(page,"Протестировать",()->{});probe.setOnClickListener(v->{probe.setEnabled(false);probe.setText("Проверяем…");
+                        new Thread(()->{String error=null;try{System.loadLibrary("garlic_internal_network");JSONObject result=new JSONObject(testPeer(dir,slot,type,endpoint));
+                            if(!result.optBoolean("ok"))error=result.optString("error","Ошибка подключения");
+                        }catch(Exception|LinkageError e){error="Сетевой модуль недоступен";}
+                        final String why=error;runOnUiThread(()->{probe.setEnabled(true);probe.setText(why==null?"● Работает":"● Ошибка: "+why);probe.setTextColor(why==null?0xff86db99:0xffff9085);});
+                        },"plugin-test").start();});
+                }
+            }
             button(page,"＋  Добавить подключение",()->editor(-1));
             }
             label("Данные плагина",20);button(page,"Импорт JSON",()->pick(PluginFiles.IMPORT));button(page,"Экспорт JSON",()->pick(PluginFiles.EXPORT));
             button(page,"Удалить плагин",()->new AlertDialog.Builder(this).setMessage("Удалить плагин и его настройки?")
-                .setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->{new java.io.File(PluginFiles.folder(this),"plugin/client.sessions.json").delete();new android.util.AtomicFile(PluginFiles.module(this)).delete();new android.util.AtomicFile(PluginFiles.state(this)).delete();details=false;selected=null;render();}).show());
+                .setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->{new java.io.File(PluginFiles.folder(this),"plugin/client.sessions.json").delete();new android.util.AtomicFile(new java.io.File(PluginFiles.folder(this),"client.connector-login")).delete();new android.util.AtomicFile(PluginFiles.module(this)).delete();new android.util.AtomicFile(PluginFiles.state(this)).delete();details=false;selected=null;render();}).show());
         }catch(Exception e){label("Не удалось прочитать настройки",16);button(page,"Восстановить из JSON",()->pick(PluginFiles.IMPORT));}
     }
     void editor(int index) throws Exception {
         JSONArray rows=config.getJSONArray("connections"); JSONObject old=index<0?null:rows.getJSONObject(index);
         LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),0);
-        Spinner kind=new Spinner(this);ArrayAdapter<String> types=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Garlic · напрямую","Garlic · входная нода"});kind.setAdapter(types);box.addView(kind);
+        JSONArray allowed=PluginFiles.manifest(this).optJSONArray("transports");
+        java.util.ArrayList<String> kinds=new java.util.ArrayList<>(),names=new java.util.ArrayList<>();
+        for(int i=0;i<KINDS.length;i++){boolean include=i<2;for(int j=0;allowed!=null && j<allowed.length();j++)include|=KINDS[i].equals(allowed.optString(j));if(include){kinds.add(KINDS[i]);names.add(NAMES[i]);}}
+        android.util.AtomicFile secretFile=new android.util.AtomicFile(new java.io.File(PluginFiles.folder(this),"client.connector-login"));
+        JSONObject secrets=secretFile.getBaseFile().exists()?new JSONObject(PluginFiles.read(secretFile.openRead())):new JSONObject();
+        Spinner kind=new Spinner(this);ArrayAdapter<String> types=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names);kind.setAdapter(types);box.addView(kind);
         EditText addr=new EditText(this);addr.setSingleLine();addr.setInputType(17);addr.setHint("https://server.example:8443");box.addView(addr);
-        EditText key=new EditText(this);key.setSingleLine();key.setInputType(129);key.setSaveEnabled(false);key.setHint("Ключ Garlic · пусто для сохранённого");box.addView(key);
-        if(old!=null){addr.setText(old.getString("address"));kind.setSelection(old.getString("kind").equals("direct")?0:1);}
+        EditText user=new EditText(this);user.setSingleLine();user.setHint("Пользователь прокси / SSH");box.addView(user);
+        EditText pin=new EditText(this);pin.setSingleLine();pin.setHint("SSH: SHA256:… · HTTPS: свой CA (DER в Base64)");box.addView(pin);
+        EditText key=new EditText(this);key.setSingleLine();key.setInputType(129);key.setSaveEnabled(false);key.setHint("Ключ Garlic или пароль · пусто для сохранённого");box.addView(key);
+        if(old!=null){addr.setText(old.getString("address"));kind.setSelection(kinds.indexOf(old.getString("kind")));JSONObject login=secrets.optJSONObject(old.getString("address"));if(login!=null){user.setText(login.optString("user"));pin.setText(login.optString("pin"));}}
         AlertDialog.Builder dlg=new AlertDialog.Builder(this).setTitle(index<0?"Добавить подключение":"Подключение").setView(box).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",null);
         if(index>=0)dlg.setNeutralButton("Удалить",(d,w)->{rows.remove(index);try{write();}catch(Exception e){render();}});
         AlertDialog d=dlg.show();d.getButton(-1).setOnClickListener(v->{try{
-            String address=PluginFiles.address(addr.getText().toString().trim());
+            String type=kinds.get(kind.getSelectedItemPosition());String address=PluginFiles.address(addr.getText().toString().trim(),type);
             if(index<0 && rows.length()>=24)throw new Exception();
-            if(key.length()>0) {
+            if(kind.getSelectedItemPosition()>=2){
+                JSONObject prior=secrets.optJSONObject(address);String name=user.getText().toString();
+                String password=key.length()>0?key.getText().toString():prior!=null&&name.equals(prior.optString("user"))?prior.optString("password"):"";
+                secrets.put(address,new JSONObject().put("user",name).put("pin",pin.getText().toString().trim()).put("password",password));
+                java.io.FileOutputStream out=secretFile.startWrite();try{out.write(secrets.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));secretFile.finishWrite(out);}catch(Exception e){secretFile.failWrite(out);throw e;}
+            }else if(key.length()>0) {
                 java.io.File dir=new java.io.File(PluginFiles.folder(this),"plugin");
                 Object reply=Class.forName("org.garlic.client.GarlicBridge").getMethod("saveKey",String.class,String.class,String.class)
                     .invoke(null,dir.getAbsolutePath(),address,key.getText().toString());
                 if(!new JSONObject((String)reply).optBoolean("ok"))throw new Exception();
                 key.setText("");
             }
-            rows.put(index<0?rows.length():index,new JSONObject().put("kind",kind.getSelectedItemPosition()==0?"direct":"ingress").put("address",address));
+            rows.put(index<0?rows.length():index,new JSONObject().put("kind",type).put("address",address));
             write();d.dismiss();
-        }catch(Exception e){addr.setError("Введите HTTPS-адрес сервера без ключа, пути и параметров");}});
+        }catch(Exception e){addr.setError("Укажите адрес со схемой выбранного протокола и портом");}});
     }
 }

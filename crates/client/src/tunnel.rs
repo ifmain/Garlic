@@ -75,7 +75,9 @@ pub fn run_vpn(
         mpsc, Arc,
     };
     crate::proxy::apply_connections(&settings, &mut cfg)?;
-    let (api, bypass) = crate::api::Api::for_windows_vpn(&mut cfg)?;
+    let (has_peers, extra)=crate::proxy::peer_bypass(&settings);
+    let (api, mut bypass) = crate::api::Api::for_windows_vpn(&mut cfg,has_peers)?;
+    bypass.extend(extra);
     let stop = Arc::new(AtomicBool::new(false));
     let ready = Arc::new(AtomicBool::new(false));
     let signal = stop.clone();
