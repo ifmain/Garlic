@@ -1161,6 +1161,7 @@
 
     iput-boolean p1, p0, Lorg/garlic/client/GarlicProxyService;->starting:Z
 
+    invoke-static {p0, p3}, Lorg/garlic/client/BackgroundSettings;->serviceError(Landroid/content/Context;Ljava/lang/Throwable;)V
     invoke-virtual {p3}, Ljava/lang/Throwable;->getMessage()Ljava/lang/String;
 
     move-result-object p2

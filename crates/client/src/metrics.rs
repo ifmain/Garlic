@@ -69,9 +69,10 @@ impl Metrics {
         protocol: &'static str,
         record_limit: usize,
         relay_protocol: &Value,
-    ) {
+    ) -> bool {
         let mut r = self.recent.lock().unwrap();
-        if !r.last.is_null() && (r.last["origin"] != origin || r.last["via"] != json!(via)) {
+        let changed = r.last["origin"] != origin || r.last["via"] != json!(via);
+        if !r.last.is_null() && changed {
             r.changes += 1;
         }
         r.last = json!({"origin":origin,"via":via});
@@ -83,6 +84,7 @@ impl Metrics {
             "fallback_reason":null,"relay_protocol":relay_protocol,"shape_profile":null
         }));
         *r.modes.entry(protocol).or_default() += 1;
+        changed
     }
     pub fn status<'a>(
         &self,

@@ -33,7 +33,6 @@ struct Endpoint {
     session: SavedSession,
 }
 struct Proxy {
-    #[cfg(feature = "alpha")]
     settings: Settings,
     api: Api,
     devices: Devices,
@@ -124,6 +123,12 @@ fn receive_request(s: &mut TcpStream) -> Result<Request, StateError> {
     }
 }
 impl Proxy {
+    fn log_transport_error(&self, event: &'static str, endpoint: &Endpoint, error: &str) {
+        let route = if endpoint.route == Route::Direct { "direct" } else { "ingress" };
+        crate::journal::write(&self.settings.config, event,
+            &format!("via={} cause={}", route, crate::journal::reason(error)));
+    }
+
     fn status(&self) -> Value {
         let mut value = self.metrics.status(
             &self.traffic,
@@ -194,7 +199,7 @@ impl Proxy {
                     crate::wire::ClientProtocol::Module(module),
             _ => crate::wire::ClientProtocol::negotiate(&info)?,
         };
-        let device = if info["device_leases"] == true {
+        let mut device = if info["device_leases"] == true {
             self.devices.claim(&endpoint.url, session, false)?
         } else {
             None
@@ -218,14 +223,25 @@ impl Proxy {
                 .saturating_mul(1000),
             authority: owner,
         };
-        let opened = self.api.call(
+        let body = serde_json::to_value(&open)?;
+        let open_with = |proof: Option<&str>| self.api.call(
             &endpoint.url,
             Method::POST,
             "/v1/infinity/streams",
             Some(&session.token),
-            device.as_deref(),
-            Some(&serde_json::to_value(&open)?),
-        )?;
+            proof,
+            Some(&body),
+        );
+        let opened = match open_with(device.as_deref()) {
+            Err(error) if device.is_some() && error.to_string() == "HTTP 409: device_in_use" => {
+                // The authority refused the proof before allocating a stream.
+                // Claim normally so another device still requires an explicit takeover.
+                self.devices.forget_rejected(&endpoint.url, device.as_deref().unwrap());
+                device = self.devices.claim(&endpoint.url, session, false)?;
+                open_with(device.as_deref())?
+            }
+            result => result?,
+        };
         let setup = (|| {
             if opened["flow_id"] != flow.to_string()
                 || opened["stream_id"] != open.stream_id.to_string()
@@ -249,7 +265,7 @@ impl Proxy {
         })();
         match setup {
             Ok(exchange) => {
-                self.metrics.opened(
+                let route_changed = self.metrics.opened(
                     &endpoint.url,
                     endpoint.route,
                     &info["server_version"],
@@ -258,6 +274,11 @@ impl Proxy {
                     exchange.record_limit,
                     &opened["relay_protocol"],
                 );
+                if route_changed {
+                    let via = if endpoint.route == Route::Direct { "direct" } else { "ingress" };
+                    crate::journal::write(&self.settings.config, "route_selected",
+                        &format!("via={} protocol={} ping_ms={}", via, protocol.name(), ping));
+                }
                 Ok((exchange, open.stream_id, device))
             }
             Err(e) => {
@@ -326,6 +347,7 @@ impl Proxy {
                             let _ = local.shutdown(std::net::Shutdown::Both);
                         }
                         self.metrics.failed();
+                        self.log_transport_error("relay_error", endpoint, &e.to_string());
                         self.metrics
                             .route_error(&endpoint.url, endpoint.route, &e.to_string());
                     }
@@ -333,6 +355,7 @@ impl Proxy {
                     return result;
                 }
                 Err(e) => {
+                    self.log_transport_error("route_error", endpoint, &e.to_string());
                     self.metrics
                         .route_error(&endpoint.url, endpoint.route, &e.to_string());
                     let retry = garlic_client_logic::retry_allowed(Some(&e.to_string()));
@@ -371,6 +394,23 @@ pub fn run(
 }
 
 pub fn serve(
+    settings: &Settings,
+    cfg: &Config,
+    api: Api,
+    address: SocketAddr,
+    stop: Arc<AtomicBool>,
+    ready: Option<std::sync::mpsc::SyncSender<SocketAddr>>,
+    tunnel_ready: Option<Arc<AtomicBool>>,
+) -> Result<(), StateError> {
+    crate::journal::write(&settings.config, "proxy_start", match cfg.mode.as_str() { "auto" => "auto", "direct" => "direct", "ru" => "ingress", _ => "unknown" });
+    let result = serve_inner(settings, cfg, api, address, stop, ready, tunnel_ready);
+    match &result {
+        Err(e) => crate::journal::write(&settings.config, "proxy_error", crate::journal::reason(&e.to_string())),
+        Ok(()) => crate::journal::write(&settings.config, "proxy_stop", ""),
+    }
+    result
+}
+fn serve_inner(
     settings: &Settings,
     cfg: &Config,
     api: Api,
@@ -420,7 +460,6 @@ pub fn serve(
     listener.set_nonblocking(true)?;
     let devices = Devices::new(api.clone(), settings)?;
     let proxy = Arc::new(Proxy {
-        #[cfg(feature = "alpha")]
         settings: settings.clone(),
         api,
         devices,
@@ -439,6 +478,7 @@ pub fn serve(
         traffic: Arc::default(),
     });
     let generation = settings.stop_generation()?;
+    crate::journal::write(&settings.config, "proxy_ready", "");
     health::start(&proxy);
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let renew = proxy.clone();
@@ -446,6 +486,8 @@ pub fn serve(
         while rx.recv_timeout(Duration::from_secs(10)).is_err()
             && !renew.stop.load(Ordering::Acquire)
         {
+            crate::journal::write(&renew.settings.config, "traffic", &format!("rx_bytes={} tx_bytes={} active={}",
+                renew.traffic.rx.load(Ordering::Relaxed), renew.traffic.tx.load(Ordering::Relaxed), renew.active.load(Ordering::Relaxed)));
             renew.devices.maintain();
         }
     });

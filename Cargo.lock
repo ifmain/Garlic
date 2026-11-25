@@ -781,6 +781,7 @@ name = "garlic-client"
 version = "0.9.2"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "ctrlc",
  "etherparse",
  "garlic-client-logic",

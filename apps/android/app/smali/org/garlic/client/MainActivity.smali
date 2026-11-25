@@ -2154,6 +2154,8 @@
 
     .line 85
     :cond_0
+    iget-object v0, p0, Lorg/garlic/client/MainActivity;->content:Landroid/widget/LinearLayout;
+    invoke-static {p0, v0}, Lorg/garlic/client/BackgroundSettings;->addExportButton(Landroid/app/Activity;Landroid/widget/LinearLayout;)V
     return-void
 .end method
 
@@ -4245,6 +4247,11 @@
     invoke-static {p0}, Lorg/garlic/client/BackgroundSettings;->chooseProtocols(Landroid/app/Activity;)V
     return-void
     :choose_apps
+    const/4 v0, 0x4
+    if-ne p2, v0, :alpha_apps
+    invoke-static {p0}, Lorg/garlic/client/BackgroundSettings;->exportLogs(Landroid/app/Activity;)V
+    return-void
+    :alpha_apps
     invoke-direct {p0}, Lorg/garlic/client/MainActivity;->chooseApps()V
 
     :goto_0
@@ -4252,7 +4259,7 @@
 .end method
 
 .method synthetic lambda$showHome$12$org-garlic-client-MainActivity(Landroid/view/View;)V
-    .locals 4
+    .locals 5
 
     .line 102
     new-instance p1, Landroid/app/AlertDialog$Builder;
@@ -4285,7 +4292,9 @@
 
     const-string v3, "Протоколы"
 
-    filled-new-array {v0, v1, v2, v3}, [Ljava/lang/String;
+    const-string v4, "Экспорт журнала"
+
+    filled-new-array {v0, v1, v2, v3, v4}, [Ljava/lang/String;
 
     move-result-object v0
 
@@ -5754,6 +5763,7 @@
 
     .line 110
     invoke-super {p0, p1, p2, p3}, Landroid/app/Activity;->onActivityResult(IILandroid/content/Intent;)V
+    invoke-static {p0, p1, p2, p3}, Lorg/garlic/client/BackgroundSettings;->exportResult(Landroid/app/Activity;IILandroid/content/Intent;)V
 
     const/16 p3, 0x64
 
@@ -5832,6 +5842,7 @@
 
     .line 74
     invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+    invoke-static {p0}, Lorg/garlic/client/BackgroundSettings;->recordLaunch(Landroid/app/Activity;)V
 
     const/4 p1, 0x1
 

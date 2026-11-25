@@ -199,17 +199,33 @@ impl Devices {
         );
         Ok(Some(token))
     }
-    pub fn maintain(&self) {
+    pub fn forget_rejected(&self, url: &str, token: &str) {
         let mut s = self.state.lock().unwrap();
-        let mut updated = Vec::new();
-        for (url, e) in &mut s.entries {
-            if e.lease.expires_at <= time() + 35
-                && self.renew(url, &e.session, &mut e.lease).is_ok()
-            {
-                updated.push((url.clone(), e.lease.clone()));
-            }
+        if s.entries.get(url).is_some_and(|e| e.lease.token == token) {
+            s.entries.remove(url);
         }
-        for (url, lease) in updated {
+        if s.known.get(url).is_some_and(|l| l.token == token) {
+            s.known.remove(url);
+        }
+    }
+    pub fn maintain(&self) {
+        let due: Vec<_> = self.state.lock().unwrap().entries.iter()
+            .filter(|(_, e)| e.lease.expires_at <= time() + 35)
+            .map(|(url, e)| (url.clone(), e.session.clone(), e.lease.clone()))
+            .collect();
+        for (url, session, mut lease) in due {
+            // A slow authority must not stall unrelated connections using cached leases.
+            if let Err(error) = self.renew(&url, &session, &mut lease) {
+                if error.to_string() == "HTTP 409: device_in_use" {
+                    self.forget_rejected(&url, &lease.token);
+                }
+                continue;
+            }
+            let mut s = self.state.lock().unwrap();
+            let Some(current) = s.entries.get_mut(&url) else { continue };
+            if current.session.token != session.token || current.lease.token != lease.token
+                || current.lease.expires_at > lease.expires_at { continue; }
+            current.lease = lease.clone();
             let _ = self.record(&url, &lease, false);
             s.known.insert(url, lease);
         }

@@ -4,6 +4,7 @@ mod api;
 mod device;
 mod jobs;
 mod metrics;
+mod journal;
 pub use jobs::run_job_cli;
 mod proxy;
 mod settings;
@@ -99,8 +100,10 @@ pub fn run(args: &[&str]) -> Result<Value, StateError> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
         }
+        journal::write(&settings.config, "vpn_start", "");
         let status = tunnel::run_vpn(settings.clone(), cfg);
         if let Err(error) = &status {
+            journal::write(&settings.config, "vpn_error", journal::reason(&error.to_string()));
             let _ = settings.cache("vpn-error.json", &json!({"error":error.to_string()}));
         }
         status?;

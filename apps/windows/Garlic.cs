@@ -22,7 +22,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
-[assembly: AssemblyInformationalVersion("0.9.2")]
+[assembly: AssemblyInformationalVersion(GarlicBuild.Version)]
 [assembly: RuntimeCompatibility(WrapNonExceptionThrows = true)]
 [assembly: CompilationRelaxations(8)]
 [assembly: AssemblyVersion("0.0.0.0")]
@@ -129,6 +129,21 @@ public sealed class GarlicApp
 		return Path.Combine(UiDataDirectory(), "client.ui-mode.txt");
 	}
 
+	internal static void LogUi(string eventName, string detail)
+	{
+		try
+		{
+			DateTime utc = DateTime.UtcNow;
+			string dir = Path.Combine(UiDataDirectory(), "logs");
+			Directory.CreateDirectory(dir);
+			string path = Path.Combine(dir, utc.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".log");
+			if (!File.Exists(path) || new FileInfo(path).Length < 8 * 1024 * 1024)
+				File.AppendAllText(path, utc.ToString("o") + " " + eventName + " " + detail + Environment.NewLine);
+		}
+		catch (IOException) {}
+		catch (UnauthorizedAccessException) {}
+	}
+
 	private void ApplyTunnelMode(int selected, bool save = true)
 	{
 		tunnelMode = ((selected == 1) ? 1 : 0);
@@ -184,6 +199,7 @@ public sealed class GarlicApp
 			}
 			catch (Exception ex)
 			{
+				LogUi("ui_error", name + " " + ex.GetType().Name + " hresult=" + ex.HResult);
 				Say(ex.Message);
 			}
 		};
@@ -1656,7 +1672,11 @@ public sealed class GarlicApp
 }
 internal static class GarlicBuild
 {
-	internal const string Version = "0.9.2";
+	#if GARLIC_ALPHA
+    internal const string Version = "0.9.3";
+#else
+    internal const string Version = "0.9.2";
+#endif
 }
 internal static class InterfaceBootstrap
 {
@@ -1720,7 +1740,7 @@ internal static class InterfaceBootstrap
 				}
 				Type type = Assembly.Load(array).GetType("GarlicApp", true);
 				MethodInfo method = type.GetMethod("CreateWindow", new Type[1] { typeof(string) });
-				Window window = (Window)method.Invoke(null, new object[1] { "0.9.2" });
+				Window window = (Window)method.Invoke(null, new object[1] { GarlicBuild.Version });
 				if (window == null)
 				{
 					throw new InvalidOperationException("UI returned no window");
@@ -1754,7 +1774,7 @@ internal static class InterfaceBootstrap
 			}
 		}
 #endif
-		return GarlicApp.CreateWindow("0.9.2");
+		return GarlicApp.CreateWindow(GarlicBuild.Version);
 	}
 
 	[STAThread]
@@ -1762,11 +1782,12 @@ internal static class InterfaceBootstrap
 	{
 		try
 		{
-			Environment.SetEnvironmentVariable("GARLIC_APP_VERSION", "0.9.2");
+			Environment.SetEnvironmentVariable("GARLIC_APP_VERSION", GarlicBuild.Version);
 #if GARLIC_ALPHA
             if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG")))
                 Environment.SetEnvironmentVariable("GARLIC_CLIENT_CONFIG", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Garlic Alpha", "client.json"));
 #endif
+            GarlicApp.LogUi("app_start", "windows");
             Application application = new Application();
 			string path = Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Garlic", "client.json");
 			string text;
@@ -1779,7 +1800,7 @@ internal static class InterfaceBootstrap
 			{
 				try
 				{
-					application.Run(createdNew ? SelectWindow() : GarlicApp.CreateWindow("0.9.2"));
+					application.Run(createdNew ? SelectWindow() : GarlicApp.CreateWindow(GarlicBuild.Version));
 				}
 				finally
 				{

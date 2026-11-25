@@ -16,6 +16,69 @@ import android.provider.Settings;
 import android.widget.Toast;
 
 public final class BackgroundSettings {
+    private static final int EXPORT_LOG = 4701;
+
+    private static java.io.File logs(Context a) {
+        return new java.io.File(a.getFilesDir(), "garlic/logs");
+    }
+
+    public static void recordLaunch(Activity a) {
+        record(a, "app_start android_sdk=" + android.os.Build.VERSION.SDK_INT);
+    }
+
+    public static void serviceError(Context context, Throwable cause) {
+        record(context, "vpn_start_error " + cause.getClass().getSimpleName());
+    }
+
+    private static void record(Context a, String event) {
+        java.io.File dir = logs(a);
+        if (!dir.isDirectory() && !dir.mkdirs()) return;
+        java.time.Instant now = java.time.Instant.now();
+        java.io.File log = new java.io.File(dir, now.toString().substring(0, 10) + ".log");
+        if (log.length() >= 8L * 1024 * 1024) return;
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(log, true)) {
+            out.write((now + " " + event + "\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException ignored) {}
+    }
+
+    public static void exportLogs(Activity a) {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("text/plain").putExtra(Intent.EXTRA_TITLE, "Garlic-" + java.time.LocalDate.now() + ".log");
+        try { a.startActivityForResult(intent, EXPORT_LOG); }
+        catch (ActivityNotFoundException e) { Toast.makeText(a, "Нет приложения для сохранения файла", Toast.LENGTH_LONG).show(); }
+    }
+
+    public static void addExportButton(Activity a, android.widget.LinearLayout parent) {
+        android.widget.Button button = new android.widget.Button(a);
+        button.setText("Экспорт журнала");
+        button.setOnClickListener(v -> exportLogs(a));
+        parent.addView(button);
+    }
+
+    public static void exportResult(Activity a, int request, int result, Intent data) {
+        if (request != EXPORT_LOG || result != Activity.RESULT_OK || data == null || data.getData() == null) return;
+        new Thread(() -> {
+            String message;
+            try {
+                try (java.io.OutputStream out = a.getContentResolver().openOutputStream(data.getData(), "wt")) {
+                    if (out == null) throw new java.io.IOException();
+                    exportDays(logs(a), out);
+                }
+                message = "Журнал сохранён";
+            } catch (Exception e) { message = "Не удалось сохранить журнал"; }
+            final String status = message;
+            a.runOnUiThread(() -> Toast.makeText(a, status, Toast.LENGTH_LONG).show());
+        }, "garlic-log-export").start();
+    }
+
+    static void exportDays(java.io.File directory, java.io.OutputStream out) throws java.io.IOException {
+        java.io.File[] files = directory.listFiles((dir, name) -> name.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}\\.log"));
+        if (files == null || files.length == 0) throw new java.io.IOException("No daily logs");
+        java.util.Arrays.sort(files);
+        for (int i = Math.max(0, files.length - 7); i < files.length; i++)
+            java.nio.file.Files.copy(files[i].toPath(), out);
+    }
     private static boolean consideredStartup;
 
     public static boolean shouldStart(Activity activity) {

@@ -520,10 +520,11 @@ impl Exchange {
             .ok_or("stream sequence overflow")?;
         Ok(())
     }
-    fn poll(&mut self, local: &mut TcpStream) -> Result<(), StateError> {
+    fn poll(&mut self, local: &mut TcpStream) -> Result<bool, StateError> {
         if self.last_poll.elapsed() >= Duration::from_millis(250) {
             self.advertise()?;
         }
+        let mut received = false;
         for index in (0..self.lanes.len()).rev() {
             let Some(lane) = self.lanes.get_mut(index) else {
                 continue;
@@ -541,9 +542,10 @@ impl Exchange {
                 self.lanes.remove(index);
                 continue;
             }
+            received = true;
             self.handle_message(index, msg, local)?;
         }
-        Ok(())
+        Ok(received)
     }
     fn handle_message(
         &mut self,
@@ -693,7 +695,11 @@ impl Exchange {
                     Err(e) => return Err(e.into()),
                 }
             }
-            self.poll(local)?;
+            // Drain incoming frames in bounded bursts before waiting for local upload.
+            // Fragmented downloads otherwise pay one idle read timeout per fragment.
+            for _ in 0..16 {
+                if !self.poll(local)? || self.ended || self.peer_closed { break; }
+            }
             if let Some((_, bytes, sent)) = self
                 .pending
                 .front_mut()
