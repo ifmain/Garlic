@@ -43,14 +43,39 @@ fn vpn_bootstrap_keeps_usable_routes_and_pins_exchange_socket() {
 #[derive(Clone)]
 pub struct Api {
     client: Client,
+    #[cfg(target_os = "android")]
+    network_client: Client,
     clock_sample: std::sync::Arc<std::sync::Mutex<Option<(u64, std::time::Instant)>>>,
     #[cfg(windows)]
     bootstrap: Option<Arc<BTreeMap<String, Vec<SocketAddr>>>>,
 }
+#[cfg(target_os = "android")]
+pub(crate) const NETWORK_CA: &[u8] = include_bytes!("legacy-network-ca.der");
+
+#[cfg(target_os = "android")]
+pub(crate) fn legacy_gateway(host: &str) -> bool {
+    matches!(host, "s1.cs2u.ru" | "s2.cs2u.ru" | "t1.cs2u.ru" |
+        "179.254.142.243" | "179.254.152.111" | "80.64.31.193" |
+        "212.34.147.227" | "194.87.111.169")
+}
+
 impl Api {
+    fn client_for(&self, _origin: &str) -> &Client {
+        #[cfg(target_os = "android")]
+        if reqwest::Url::parse(_origin).ok().is_some_and(|u|
+            u.scheme() == "https" && u.host_str().is_some_and(legacy_gateway)) {
+            return &self.network_client;
+        }
+        &self.client
+    }
+
     pub fn new(cfg: &Config) -> Result<Self, StateError> {
         Ok(Self {
             client: Self::builder(cfg)?.build()?,
+            #[cfg(target_os = "android")]
+            network_client: Self::builder(cfg)?
+                .add_root_certificate(reqwest::Certificate::from_der(NETWORK_CA)?)
+                .build()?,
             clock_sample: Default::default(),
             #[cfg(windows)]
             bootstrap: None,
@@ -154,7 +179,7 @@ impl Api {
         ))
     }
     pub(crate) fn route_probe(&self, endpoint: &str, token: &str) -> Result<u64, StateError> {
-        let response = self.client.get(format!("{}/v1/auth/info", origin(endpoint)?))
+        let response = self.client_for(endpoint).get(format!("{}/v1/auth/info", origin(endpoint)?))
             .bearer_auth(token).timeout(Duration::from_secs(2)).send()?.error_for_status()?;
         let mut data = Vec::new();
         response.take(16385).read_to_end(&mut data)?;
@@ -173,8 +198,7 @@ impl Api {
         device: Option<&str>,
         body: Option<&Value>,
     ) -> Result<Value, StateError> {
-        let mut req = self
-            .client
+        let mut req = self.client_for(endpoint)
             .request(method, format!("{}{path}", origin(endpoint)?));
         if let Some(token) = bearer {
             req = req.bearer_auth(token);
