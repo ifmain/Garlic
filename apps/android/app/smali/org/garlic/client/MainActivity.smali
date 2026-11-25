@@ -1823,6 +1823,8 @@
 
     invoke-virtual {v2, v1}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
+    invoke-static {p0, v2}, Lorg/garlic/client/ReleaseUpdate;->addButton(Landroid/app/Activity;Landroid/widget/LinearLayout;)V
+
     .line 103
     iget-object v1, p0, Lorg/garlic/client/MainActivity;->content:Landroid/widget/LinearLayout;
 

@@ -125,20 +125,29 @@ internal static class ReleaseClient
             { if (!p.WaitForExit(60000) || p.ExitCode != 0 || !File.Exists(Path.Combine(Root,tag.Substring(6),"Garlic.exe"))) throw new IOException("Не удалось установить обновление."); }
         } finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }
-    internal static async void Check(Window window)
+    static bool checking, manualRequested;
+    internal static async void Check(Window window, bool manual = false)
     {
+        manualRequested |= manual;
+        if (checking) return;
+        checking = true;
         bool accepted = false;
         try
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             string tag = await Task.Run((Func<string>)Latest);
-            if (tag == null || !window.IsVisible || File.Exists(Path.Combine(Root,tag.Substring(6),"Garlic.exe"))) return;
+            if (!window.IsVisible) return;
+            if (tag == null || File.Exists(Path.Combine(Root,tag.Substring(6),"Garlic.exe"))) {
+                if (manualRequested) MessageBox.Show(window,tag == null ? "Установлена последняя версия: "+GarlicBuild.Version : "Обновление уже установлено. Перезапустите Garlic.","Обновление Garlic");
+                return;
+            }
             accepted = MessageBox.Show(window,"Скачать и установить Garlic Alpha " + tag.Substring(6) + "? Обновление откроется при следующем запуске.",
                 "Обновление Garlic",MessageBoxButton.YesNo,MessageBoxImage.Question) == MessageBoxResult.Yes;
             if (!accepted) return;
             await Task.Run(() => Install(tag));
             if(window.IsVisible) MessageBox.Show(window,"Обновление установлено. При следующем запуске откроется новая версия.","Garlic Alpha");
         }
-        catch(Exception e) { GarlicApp.LogUi("update_error",e.GetType().Name); if (accepted && window.IsVisible) MessageBox.Show(window,e.Message,"Обновление Garlic"); }
+        catch(Exception e) { GarlicApp.LogUi("update_error",e.GetType().Name); if ((accepted || manualRequested) && window.IsVisible) MessageBox.Show(window,e.Message,"Обновление Garlic"); }
+        finally { checking = false; manualRequested = false; }
     }
 }

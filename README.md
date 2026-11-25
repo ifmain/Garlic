@@ -2,7 +2,7 @@
 
 Garlic — self-hosted VPN с клиентами для Android и Windows. Клиенты используют общее сетевое ядро на Rust. Один серверный бинарник запускается в роли входной, промежуточной или выходной ноды.
 
-Скачать [Windows x64 EXE](https://github.com/ifmain/Garlic/releases/download/alpha-0.9.5/Garlic-Alpha-Windows-x64.exe) или [Android APK](https://github.com/ifmain/Garlic/releases/download/alpha-0.9.5/garlic-alpha.apk). Windows запрашивает права администратора до открытия приложения. Клиенты предлагают загрузить новую версию при запуске. Windows проверяет подпись выпуска и применяет обновление при следующем запуске. На Android установку подтверждает системный установщик.
+Скачать [Windows x64 EXE](https://github.com/ifmain/Garlic/releases/download/alpha-0.9.6/Garlic-Alpha-Windows-x64.exe) или [Android APK](https://github.com/ifmain/Garlic/releases/download/alpha-0.9.6/garlic-alpha.apk). Windows запрашивает права администратора до открытия приложения. Клиенты предлагают загрузить новую версию при запуске. Windows проверяет подпись выпуска и применяет обновление при следующем запуске. На Android установку подтверждает системный установщик.
 
 ## Linux-сервер
 

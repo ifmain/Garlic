@@ -52,6 +52,7 @@ public final class BackgroundSettings {
 
     public static void addExportButton(Activity a, android.widget.LinearLayout parent) {
         android.widget.Button button = new android.widget.Button(a);
+        ReleaseUpdate.addButton(a, parent);
         button.setText("Экспорт журнала");
         button.setOnClickListener(v -> exportLogs(a));
         parent.addView(button);

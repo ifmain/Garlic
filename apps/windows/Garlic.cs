@@ -1018,9 +1018,9 @@ public sealed class GarlicApp
 		{
 			window = (Window)XamlReader.Load(stream);
 		}
-		string[] array = new string[41]
+		string[] array = new string[]
 		{
-			"LogsButton", "HomeButton", "ServersButton", "NodeTitle", "UsersButton", "Logo", "Auth", "Home", "Admin", "Server",
+			"UpdateButton", "LogsButton", "HomeButton", "ServersButton", "NodeTitle", "UsersButton", "Logo", "Auth", "Home", "Admin", "Server",
 			"Key", "Login", "Connection", "Subscription", "Power", "TunnelMode", "TunnelHint", "Route", "Takeover", "Logout",
 			"Username", "Days", "Unlimited", "Create", "Issue", "ChangeSub", "Toggle", "RoleButton", "Remove", "Users",
 			"Message", "RouteInfo", "Statistics", "ShowStatistics", "Servers", "Nodes", "StreamLimit", "WorkerLimit", "SaveServer", "RefreshServers",
@@ -1159,7 +1159,11 @@ public sealed class GarlicApp
 		{
 			C<Button>("Days").IsEnabled = true;
 		};
-		Click("LogsButton", () =>
+		#if GARLIC_BUNDLE
+        C<Button>("UpdateButton").Visibility = Visibility.Visible;
+        C<Button>("UpdateButton").Click += delegate { ReleaseClient.Check(window, true); };
+#endif
+        Click("LogsButton", () =>
 		{
 			string text3 = Path.Combine(UiDataDirectory(), "logs");
 			Directory.CreateDirectory(text3);
@@ -1683,7 +1687,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.5";
+    internal const string Version = "0.9.6";
 #else
     internal const string Version = "0.9.2";
 #endif

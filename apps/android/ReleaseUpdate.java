@@ -17,7 +17,7 @@ import org.json.JSONObject;
 
 public final class ReleaseUpdate {
     private static final int PERMISSION = 4782;
-    private static boolean checking;
+    private static boolean checking, manualRequested, downloading;
     static File pending(android.content.Context c) { return new File(c.getCacheDir(), "garlic-release.apk"); }
     private static void fetch(String address, OutputStream out, int limit) throws IOException {
         HttpsURLConnection c = (HttpsURLConnection)new URL(address).openConnection();
@@ -43,8 +43,21 @@ public final class ReleaseUpdate {
         }
         return false;
     }
-    public static synchronized void check(Activity a) {
-        if(checking) return;
+    public static void addButton(Activity a, android.widget.LinearLayout parent) {
+        android.widget.Button button = new android.widget.Button(a);
+        button.setText("Обновить с GitHub");
+        button.setOnClickListener(v -> check(a, true));
+        parent.addView(button);
+    }
+    public static void check(Activity a) { check(a, false); }
+    private static void check(Activity a, boolean manual) {
+        if (downloading) {
+            if (manual) Toast.makeText(a,"Обновление загружается",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        manualRequested |= manual;
+        if (manual) Toast.makeText(a,"Проверяем GitHub…",Toast.LENGTH_SHORT).show();
+        if (checking) return;
         checking=true;
         new Thread(() -> {
             try {
@@ -58,12 +71,25 @@ public final class ReleaseUpdate {
                     if(!item.getBoolean("draft") && !item.getBoolean("prerelease") && tag.startsWith("alpha-") && newer(tag.substring(6),best)) best=tag.substring(6);
                 }
                 final String version=best;
-                if(!version.equals(installed)) a.runOnUiThread(() -> {
-                    if(!a.isFinishing() && !a.isDestroyed()) new AlertDialog.Builder(a).setTitle("Обновление Garlic Alpha")
+                a.runOnUiThread(() -> {
+                    boolean notify=manualRequested;
+                    checking=false;
+                    manualRequested=false;
+                    if (a.isFinishing() || a.isDestroyed()) return;
+                    if (version.equals(installed)) {
+                        if (notify) Toast.makeText(a,"Установлена последняя версия: "+installed,Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    new AlertDialog.Builder(a).setTitle("Обновление Garlic Alpha")
                       .setMessage("Скачать и установить версию " + version + "?")
                       .setNegativeButton("Позже",null).setPositiveButton("Скачать",(d,w)->download(a,version)).show();
                 });
-            } catch(Exception e) { android.util.Log.w("Garlic","Release check: "+e.getClass().getSimpleName()); }
+            } catch(Exception e) { android.util.Log.w("Garlic","Release check: "+e.getClass().getSimpleName());
+                a.runOnUiThread(() -> {
+                    if(manualRequested && !a.isDestroyed()) Toast.makeText(a,"Не удалось проверить GitHub. Попробуйте ещё раз.",Toast.LENGTH_LONG).show();
+                    manualRequested=false;
+                    checking=false;
+                }); }
         },"garlic-release-check").start();
     }
     private static void verify(Activity a, File file, String version) throws Exception {
@@ -75,6 +101,7 @@ public final class ReleaseUpdate {
            !Arrays.equals(old.signingInfo.getApkContentsSigners(),apk.signingInfo.getApkContentsSigners())) throw new IOException("Package verification failed");
     }
     private static void download(Activity a,String version) {
+        downloading=true;
         new Thread(()->{
             File part=null;
             try {
@@ -86,7 +113,7 @@ public final class ReleaseUpdate {
                 java.nio.file.Files.move(part.toPath(),pending(a).toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 a.runOnUiThread(()->install(a,true));
             } catch(Exception e) { a.runOnUiThread(()->Toast.makeText(a,"Не удалось скачать или проверить обновление",Toast.LENGTH_LONG).show()); }
-            finally { if(part!=null) part.delete(); }
+            finally { if(part!=null) part.delete(); a.runOnUiThread(()->downloading=false); }
         },"garlic-release-download").start();
     }
     public static void permissionResult(Activity a,int request) { if(request==PERMISSION) install(a,false); }
