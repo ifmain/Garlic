@@ -12,8 +12,8 @@ using Microsoft.Win32;
 
 internal static class PluginFiles
 {
-    static readonly string[] Kinds={"direct","ingress","http","https","socks4","socks5","ssh"};
-    static readonly string[] Names={"Garlic · напрямую","Garlic · входная нода","HTTP CONNECT","HTTPS CONNECT","SOCKS4 / 4a","SOCKS5","SSH-туннель"};
+    static bool Builtin(string k){return k=="direct"||k=="ingress";}
+    static string Display(string k){return k=="direct"?"Garlic · напрямую":k=="ingress"?"Garlic · входная нода":k.ToUpperInvariant();}
     const string DataFormat = "garlic-plugin-data/1";
     internal static Dictionary<string,object> Parse(string json) {
         var v = new JavaScriptSerializer { MaxJsonLength = 8192, RecursionLimit = 4 }
@@ -30,7 +30,7 @@ internal static class PluginFiles
             if(items==null || items.Count>24)throw new InvalidDataException();
             foreach(var item in items){
                 var row=item as Dictionary<string,object>;
-                if(row==null || row.Count!=2 || !Kinds.Contains(row["kind"] as string))throw new InvalidDataException();
+                if(row==null || row.Count!=2 || !System.Text.RegularExpressions.Regex.IsMatch(row["kind"] as string ?? "",@"\A[a-z][a-z0-9-]{0,31}\z"))throw new InvalidDataException();
                 row["address"]=Address(row["address"] as string,(string)row["kind"]);rows.Add(row);
             }
         }
@@ -89,6 +89,20 @@ internal static class PluginFiles
             var state=Path.Combine(dir,"client.installed-gpf");if(File.Exists(Path.ChangeExtension(state,"gpf-module")))yield return state;
         }
     }
+    internal static void FillProtocols(MenuItem menu,string config,Action<string> error) {
+        menu.Items.Clear();
+        foreach(string path in Slots(config))try{
+            var m=Manifest(Path.ChangeExtension(path,"gpf-module"));
+            if(!m.ContainsKey("capability")||!Equals(m["capability"],"network"))continue;
+            var state=Parse(Read(path));
+            if(!Equals(state["id"],m["id"]))continue;
+            var item=new MenuItem{Header=(string)m["name"],IsCheckable=true,IsChecked=(bool)state["enabled"]};
+            item.Click+=delegate{try{var current=Parse(Read(path));current["enabled"]=item.IsChecked;Save(path,current);}
+                catch(Exception e){error(e.Message);}};
+            menu.Items.Add(item);
+        }catch(Exception e){error(e.Message);}
+        menu.IsEnabled=menu.Items.Count>0;
+    }
     internal static void ImportPackage(string config,string text,Func<string,bool> confirm) {
         var j=new JavaScriptSerializer{MaxJsonLength=16384,RecursionLimit=4};
         var env=j.Deserialize<Dictionary<string,string>>(text);
@@ -101,13 +115,13 @@ internal static class PluginFiles
         }
         var m=j.Deserialize<Dictionary<string,object>>(new UTF8Encoding(false,true).GetString(raw));
         string id=(string)m["id"],name=(string)m["name"],cap=(string)m["capability"];
-        if(!Equals(m["format"],"gpf/3") || !(cap=="network"||cap=="canvas") || name.Length>80 || name.Length==0 ||
+        if(!(Equals(m["format"],"gpf/3") || (Equals(m["format"],"gpf/4") && cap=="network" && Equals(m["wire_abi"],1))) || !(cap=="network"||cap=="canvas") || name.Length>80 || name.Length==0 ||
           !System.Text.RegularExpressions.Regex.IsMatch(id,@"\A[a-z0-9-]{1,48}\z") || ((string)m["wasm"]).Length>8192)throw new InvalidDataException();
         string state=Path.Combine(Library(config),"s-"+id,"client.installed-gpf"),module=Path.ChangeExtension(state,"gpf-module");
         string fingerprint;
         using(var hash=System.Security.Cryptography.SHA256.Create())fingerprint=BitConverter.ToString(hash.ComputeHash(modulus)).Replace("-","");
         if(File.Exists(module)&&!Equals(Manifest(module)["publisher"],fingerprint))throw new InvalidDataException("Publisher mismatch");
-        if(!confirm(name+" ("+id+")\n"+(cap=="canvas"?"Экран и ввод на нём":"Выбор разрешённых подключений")+"\nSHA-256: "+fingerprint))return;
+        if(!confirm(name+" ("+id+")\n"+(cap=="canvas"?"Экран и ввод на нём":Equals(m["format"],"gpf/4")?"Обработка трафика слота и данных входа выбранного подключения":"Выбор разрешённых подключений")+"\nSHA-256: "+fingerprint))return;
         if(!File.Exists(state))Save(state,new Dictionary<string,object>{{"id",id},{"format",DataFormat},{"enabled",true},{"connections",new object[0]},{"interval_seconds",5},{"ingress_penalty_ms",0}});
         m["publisher"]=fingerprint;Save(module,m);
     }
@@ -180,12 +194,12 @@ internal static class PluginFiles
             var rows=(List<Dictionary<string,object>>)v["connections"];
             label("Подключения",20);label("Изменения применятся при следующем подключении.",14);
             var transportList=manifest.ContainsKey("transports")?manifest["transports"] as IList:null;
-            var kinds=Kinds.Where((k,i)=>i<2 || (transportList!=null && transportList.Contains(k))).ToArray();
+            var kinds=new[]{"direct","ingress"}.Concat(transportList==null?Enumerable.Empty<string>():transportList.OfType<string>()).Distinct().ToArray();
             string secretPath=Path.ChangeExtension(path,"connector-login");
             var secrets=File.Exists(secretPath)?Manifest(secretPath):new Dictionary<string,object>();
             Action<int> editor=index=>{
                 panel.Children.Clear();label(index<0?"Добавить подключение":"Подключение",26);
-                label("Тип подключения",15);var kind=new ComboBox{ItemsSource=kinds.Select(k=>Names[Array.IndexOf(Kinds,k)]).ToList(),SelectedIndex=index<0?0:Array.IndexOf(kinds,(string)rows[index]["kind"])};panel.Children.Add(kind);
+                label("Тип подключения",15);var kind=new ComboBox{ItemsSource=kinds.Select(Display).ToList(),SelectedIndex=index<0?0:Array.IndexOf(kinds,(string)rows[index]["kind"])};panel.Children.Add(kind);
                 label("Адрес сервера",15);var addr=new TextBox{Text=index<0?"":(string)rows[index]["address"],ToolTip="https://server.example:8443"};panel.Children.Add(addr);
                 label("Пользователь прокси / SSH",15);var user=new TextBox();panel.Children.Add(user);
                 label("Отпечаток SSH (SHA256:…) или свой CA для HTTPS (DER в Base64)",15);var pin=new TextBox();panel.Children.Add(pin);
@@ -209,8 +223,8 @@ internal static class PluginFiles
                 if(index>=0)action(panel,"Удалить подключение",delegate{rows.RemoveAt(index);Save(path,v);refresh();});
                 action(panel,"Отмена",refresh);
             };
-            for(int i=0;i<rows.Count;i++){int index=i;action(panel,Names[Array.IndexOf(Kinds,(string)rows[i]["kind"])]+"   ·   "+rows[i]["address"],()=>editor(index));
-                if(Array.IndexOf(Kinds,(string)rows[i]["kind"])>=2){
+            for(int i=0;i<rows.Count;i++){int index=i;action(panel,Display((string)rows[i]["kind"])+"   ·   "+rows[i]["address"],()=>editor(index));
+                if(!Builtin((string)rows[i]["kind"])){
                     var probe=new Button{Content="Протестировать"};panel.Children.Add(probe);
                     probe.Click+=async delegate{probe.IsEnabled=false;probe.Content="Проверяем…";try{
                         await test((string)manifest["id"],(string)rows[index]["kind"],(string)rows[index]["address"]);

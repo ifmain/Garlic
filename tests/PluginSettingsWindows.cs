@@ -33,6 +33,17 @@ class PluginSettingsWindows {
             string config=Path.Combine(root,"client.json");
             type.GetMethod("ImportPackage",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,
                 new object[]{config,File.ReadAllText(args[1]),new Func<string,bool>(s=>true)});
+            var protocols=new MenuItem();
+            var fill=type.GetMethod("FillProtocols",BindingFlags.Static|BindingFlags.NonPublic);
+            Action<string> fail=message=>{throw new Exception(message);};
+            fill.Invoke(null,new object[]{protocols,config,fail});
+            var slot=protocols.Items.OfType<MenuItem>().Single();
+            if(!Equals(slot.Header,"Dev Connection") || !slot.IsChecked)throw new Exception("Missing enabled protocol slot");
+            foreach(bool enabled in new[]{false,true}){
+                slot.IsChecked=enabled;slot.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                fill.Invoke(null,new object[]{protocols,config,fail});slot=protocols.Items.OfType<MenuItem>().Single();
+                if(slot.IsChecked!=enabled)throw new Exception("Slot toggle not persisted");
+            }
             System.Threading.SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
             var w=new Window();NameScope.SetNameScope(w,new NameScope());var grid=new Grid();var auth=new Grid();w.Content=grid;grid.Children.Add(auth);w.RegisterName("Auth",auth);
             Func<string,string,string,Task> test=(id,kind,addr)=>Task.Run(()=>{

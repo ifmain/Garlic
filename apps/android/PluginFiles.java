@@ -58,12 +58,12 @@ public final class PluginFiles {
         if(!verifier.verify(android.util.Base64.decode(env.getString("signature"),0)))throw new IOException();
         JSONObject m=new JSONObject(new String(raw,StandardCharsets.UTF_8));
         String id=m.getString("id"),cap=m.getString("capability"),name=m.getString("name");
-        if(!"gpf/3".equals(m.getString("format")) || !("canvas".equals(cap)||"network".equals(cap)) ||
+        if(!("gpf/3".equals(m.getString("format")) || ("gpf/4".equals(m.getString("format")) && m.optInt("wire_abi")==1 && "network".equals(cap))) || !("canvas".equals(cap)||"network".equals(cap)) ||
             !id.matches("[a-z0-9-]{1,48}") || name.isEmpty() || name.length()>80 || m.getString("wasm").length()>8192)throw new IOException();
         StringBuilder fp=new StringBuilder();for(byte b:java.security.MessageDigest.getInstance("SHA-256").digest(modulus))fp.append(String.format(java.util.Locale.ROOT,"%02X",b));
         File file=new File(folder(a,id),"client.gpf-module");
         if(file.exists() && !new JSONObject(read(new AtomicFile(file).openRead())).getString("publisher").equals(fp.toString()))throw new IOException("publisher mismatch");
-        new AlertDialog.Builder(a).setTitle("Установить плагин?").setMessage(name+" ("+id+")\n"+("canvas".equals(cap)?"Экран и ввод на нём":"Выбор разрешённых подключений")+"\nSHA-256: "+fp)
+        new AlertDialog.Builder(a).setTitle("Установить плагин?").setMessage(name+" ("+id+")\n"+("canvas".equals(cap)?"Экран и ввод на нём":"gpf/4".equals(m.optString("format"))?"Обработка трафика слота и данных входа выбранного подключения":"Выбор разрешённых подключений")+"\nSHA-256: "+fp)
             .setNegativeButton("Отмена",null).setPositiveButton("Установить",(dialog,which)->{
                 try{
                     a.selected=id;
@@ -102,7 +102,7 @@ public final class PluginFiles {
         if(rows.length()>24)throw new JSONException("connections");
         for(int i=0;i<rows.length();i++){
             JSONObject row=rows.getJSONObject(i);
-            if(row.length()!=2 || !java.util.Arrays.asList(PluginPage.KINDS).contains(row.getString("kind"))) throw new JSONException("kind");
+            if(row.length()!=2 || !row.getString("kind").matches("[a-z][a-z0-9-]{0,31}")) throw new JSONException("kind");
             row.put("address",address(row.getString("address"),row.getString("kind")));
         }
         return v.put("connections",rows).put("format","garlic-plugin-data/1");
@@ -112,7 +112,7 @@ public final class PluginFiles {
             if (stream == null) throw new IOException();
             byte[] buf = new byte[2048]; int n;
             while ((n = stream.read(buf)) != -1) {
-                if (bytes.size()+n > 8192) throw new IOException();
+                if (bytes.size()+n > 16384) throw new IOException();
                 bytes.write(buf,0,n);
             }
             return bytes.toString("UTF-8");
@@ -127,6 +127,29 @@ public final class PluginFiles {
         FileOutputStream out = file.startWrite();
         try { out.write(data.toString().getBytes(StandardCharsets.UTF_8)); file.finishWrite(out); }
         catch (Exception e) { file.failWrite(out); throw e; }
+    }
+    static final class Slot {
+        final File state;final String name;final boolean enabled;
+        Slot(File state,String name,boolean enabled){this.state=state;this.name=name;this.enabled=enabled;}
+        void enable(boolean on)throws Exception{
+            AtomicFile f=new AtomicFile(state);
+            JSONObject v=parse(read(f.openRead()));v.put("enabled",on);
+            FileOutputStream out=f.startWrite();
+            try{out.write(v.toString().getBytes(StandardCharsets.UTF_8));f.finishWrite(out);}
+            catch(Exception e){f.failWrite(out);throw e;}
+        }
+    }
+    static java.util.List<Slot> networkSlots(Activity a){
+        java.util.ArrayList<Slot> result=new java.util.ArrayList<>();
+        File[] dirs=new File(folder(a,null),"plugins-v3").listFiles();
+        if(dirs!=null){java.util.Arrays.sort(dirs);for(File dir:dirs)try{
+            JSONObject m=new JSONObject(read(new AtomicFile(new File(dir,"client.gpf-module")).openRead()));
+            if(!"network".equals(m.optString("capability")) || !dir.getName().equals("s-"+m.getString("id")))continue;
+            File path=new File(dir,"client.installed-gpf");
+            JSONObject v=parse(read(new AtomicFile(path).openRead()));
+            if(v.getString("id").equals(m.getString("id")))result.add(new Slot(path,m.getString("name"),v.getBoolean("enabled")));
+        }catch(Exception ignored){}}
+        return result;
     }
     static void show(Activity a) {
         a.startActivity(new Intent(a,PluginPage.class));

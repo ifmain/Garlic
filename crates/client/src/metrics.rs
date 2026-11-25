@@ -23,7 +23,7 @@ struct Recent {
     errors: BTreeMap<String, u64>,
     changes: u64,
     ping: Option<u64>,
-    modes: BTreeMap<&'static str, u64>,
+    modes: BTreeMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -66,7 +66,7 @@ impl Metrics {
         via: Route,
         version: &Value,
         ping: u64,
-        protocol: &'static str,
+        protocol: &str,
         record_limit: usize,
         relay_protocol: &Value,
     ) -> bool {
@@ -83,7 +83,7 @@ impl Metrics {
             "segment":if via==Route::Direct {"client_to_exit"} else {"client_to_entry"},
             "fallback_reason":null,"relay_protocol":relay_protocol,"shape_profile":null
         }));
-        *r.modes.entry(protocol).or_default() += 1;
+        *r.modes.entry(protocol.to_owned()).or_default() += 1;
         changed
     }
     pub fn status<'a>(

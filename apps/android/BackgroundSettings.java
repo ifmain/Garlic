@@ -154,10 +154,14 @@ public final class BackgroundSettings {
 
     public static void chooseProtocols(Activity activity) {
         String current = protocols(activity);
-        boolean[] selected = {current.contains("2"), current.contains("3"), current.contains("4"),
+        boolean[] defaults = {current.contains("2"), current.contains("3"), current.contains("4"),
             activity.getSharedPreferences("garlic_prefs", 0).getBoolean("alpha_slot", true)};
+        java.util.List<PluginFiles.Slot> slots=PluginFiles.networkSlots(activity);
+        boolean[] selected=java.util.Arrays.copyOf(defaults,4+slots.size());
+        String[] labels=java.util.Arrays.copyOf(new String[]{"GEX2","GEX3","GEX4 (экспериментальный)","Обновлять профиль протокола"},selected.length);
+        for(int i=0;i<slots.size();i++){labels[i+4]=slots.get(i).name;selected[i+4]=slots.get(i).enabled;}
         AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("Протоколы")
-            .setMultiChoiceItems(new String[]{"GEX2", "GEX3", "GEX4 (экспериментальный)", "Обновлять профиль протокола"}, selected,
+            .setMultiChoiceItems(labels, selected,
                 (d, i, on) -> selected[i] = on)
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(android.R.string.ok, null).create();
@@ -171,6 +175,8 @@ public final class BackgroundSettings {
                 Toast.makeText(activity, "Выберите хотя бы один протокол", Toast.LENGTH_SHORT).show();
                 return;
             }
+            try{for(int i=0;i<slots.size();i++)if(selected[i+4]!=slots.get(i).enabled)slots.get(i).enable(selected[i+4]);}
+            catch(Exception e){Toast.makeText(activity,"Ошибка сохранения протокола",Toast.LENGTH_SHORT).show();return;}
             activity.getSharedPreferences("garlic_prefs", 0).edit()
                 .putBoolean("alpha_slot", selected[3])
                 .putString("alpha_protocols", android.text.TextUtils.join(",", versions)).apply();

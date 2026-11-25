@@ -1077,6 +1077,9 @@ public sealed class GarlicApp
 		};
 		tunnelMenu.Items.Add(new Separator());
 		tunnelMenu.Items.Add(updates);
+        var pluginProtocols=new MenuItem{Header="Протоколы плагинов"};
+        tunnelMenu.Items.Add(pluginProtocols);
+        tunnelMenu.Opened+=delegate{PluginFiles.FillProtocols(pluginProtocols,alphaConfig,garlicApp.Say);};
 		string startFlag = Path.ChangeExtension(alphaConfig, "auto-start");
 		MenuItem startOnOpen = new MenuItem {
 			Header = "Подключать при открытии", IsCheckable = true, IsChecked = File.Exists(startFlag)
@@ -1715,11 +1718,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-#if GARLIC_PLUGIN_PREVIEW
-    internal const string Version = "0.9.17.2";
-#else
-    internal const string Version = "0.9.17";
-#endif
+    internal const string Version = "0.9.18";
 #else
     internal const string Version = "0.9.2";
 #endif

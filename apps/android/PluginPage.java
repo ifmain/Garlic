@@ -10,8 +10,8 @@ import android.widget.*;
 import org.json.*;
 
 public final class PluginPage extends Activity {
-    static final String[] KINDS={"direct","ingress","http","https","socks4","socks5","ssh"};
-    static final String[] NAMES={"Garlic · напрямую","Garlic · входная нода","HTTP CONNECT","HTTPS CONNECT","SOCKS4 / 4a","SOCKS5","SSH-туннель"};
+    static boolean builtin(String k){return k.equals("direct")||k.equals("ingress");}
+    static String display(String k){return k.equals("direct")?"Garlic · напрямую":k.equals("ingress")?"Garlic · входная нода":k.toUpperCase(java.util.Locale.ROOT);}
     private static native String testPeer(String dir,String slot,String kind,String address);
     private LinearLayout page;
     String selected;
@@ -68,8 +68,8 @@ public final class PluginPage extends Activity {
             label("Подключения",20);label("Используются при следующем подключении.",14);
             JSONArray rows=config.getJSONArray("connections");
             for(int i=0;i<rows.length();i++){final int index=i;JSONObject row=rows.getJSONObject(i);label(row.getString("address"),16);
-                String type=row.getString("kind");button(page,NAMES[java.util.Arrays.asList(KINDS).indexOf(type)]+"   ·   Изменить",()->editor(index));
-                if(java.util.Arrays.asList(KINDS).indexOf(type)>=2){
+                String type=row.getString("kind");button(page,display(type)+"   ·   Изменить",()->editor(index));
+                if(!builtin(type)){
                     final String slot=selected,dir=PluginFiles.folder(this,null).getAbsolutePath(),endpoint=row.getString("address");
                     Button probe=button(page,"Протестировать",()->{});probe.setOnClickListener(v->{probe.setEnabled(false);probe.setText("Проверяем…");
                         new Thread(()->{String error=null;try{System.loadLibrary("garlic_internal_network");JSONObject result=new JSONObject(testPeer(dir,slot,type,endpoint));
@@ -91,7 +91,9 @@ public final class PluginPage extends Activity {
         LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),0);
         JSONArray allowed=PluginFiles.manifest(this).optJSONArray("transports");
         java.util.ArrayList<String> kinds=new java.util.ArrayList<>(),names=new java.util.ArrayList<>();
-        for(int i=0;i<KINDS.length;i++){boolean include=i<2;for(int j=0;allowed!=null && j<allowed.length();j++)include|=KINDS[i].equals(allowed.optString(j));if(include){kinds.add(KINDS[i]);names.add(NAMES[i]);}}
+        kinds.add("direct");kinds.add("ingress");
+        for(int i=0;allowed!=null && i<allowed.length();i++){String k=allowed.getString(i);if(!kinds.contains(k))kinds.add(k);}
+        for(String k:kinds)names.add(display(k));
         android.util.AtomicFile secretFile=new android.util.AtomicFile(new java.io.File(PluginFiles.folder(this),"client.connector-login"));
         JSONObject secrets=secretFile.getBaseFile().exists()?new JSONObject(PluginFiles.read(secretFile.openRead())):new JSONObject();
         Spinner kind=new Spinner(this);ArrayAdapter<String> types=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names);kind.setAdapter(types);box.addView(kind);
