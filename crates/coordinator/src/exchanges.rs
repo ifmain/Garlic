@@ -334,6 +334,18 @@ impl Carrier {
         self.flush_outbound();
         Ok(())
     }
+    fn confirm_lane(&mut self, lane: Uuid, ack: u64, selective: u32) -> Result<bool, SessionError> {
+        if let Err(error) = self.confirm(ack, selective) {
+            // This packet has not changed exchange state. Other lanes can still deliver it.
+            self.lanes.remove(&lane);
+            if self.lanes.is_empty() {
+                return Err(error);
+            }
+            eprintln!("Client exchange lane declined: {error}");
+            return Ok(false);
+        }
+        Ok(true)
+    }
     fn queue(&mut self, id: Uuid, kind: u8, data: &[u8]) -> Result<(), SessionError> {
         let record = Record {
             owner: *id.as_bytes(),
@@ -447,7 +459,9 @@ impl Carrier {
         let seq = packet.sequence;
         let ack = packet.acknowledgement;
         let flag = packet.flag;
-        self.confirm(ack, selective)?;
+        if !self.confirm_lane(lane, ack, selective)? {
+            return Ok(());
+        }
         if seq > self.received {
             if seq - self.received > 64 {
                 return Err("client sequence outside exchange window".into());
@@ -558,6 +572,26 @@ mod tests {
             Packet::decode(&bytes.data).unwrap().sequence,
             SEND_WINDOW as u64 + 1
         );
+    }
+
+    #[test]
+    fn invalid_lane_feedback_preserves_other_lane_and_pending_data() {
+        let mut carrier = Carrier::default();
+        let first = Uuid::from_u128(1);
+        let second = Uuid::from_u128(2);
+        let (a, mut first_queue) = mpsc::channel(4);
+        let (b, mut second_queue) = mpsc::channel(4);
+        carrier.lanes.insert(first, a);
+        carrier.lanes.insert(second, b);
+        carrier.queue(Uuid::from_u128(3), 2, b"").unwrap();
+        let original = first_queue.try_recv().unwrap();
+        assert!(!carrier.confirm_lane(first, 2, 0).unwrap());
+        assert!(!carrier.lanes.contains_key(&first));
+        carrier.retry_outbound(Instant::now() + Duration::from_secs(2));
+        assert_eq!(second_queue.try_recv().unwrap().data, original.data);
+        assert!(carrier.confirm_lane(second, 1, 0).unwrap());
+        assert!(carrier.unacked.is_empty());
+        assert!(carrier.confirm_lane(second, 1, 1).is_err());
     }
 
     #[test]

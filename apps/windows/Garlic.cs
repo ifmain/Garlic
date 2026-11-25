@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -1715,7 +1715,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.14";
+    internal const string Version = "0.9.15";
 #else
     internal const string Version = "0.9.2";
 #endif
@@ -1871,6 +1871,10 @@ internal static class InterfaceBootstrap
 					}
 				}
 			}
+#if GARLIC_BUNDLE
+            if (ReleaseClient.RestartPath != null)
+                Process.Start(new ProcessStartInfo(ReleaseClient.RestartPath) { UseShellExecute=false, WorkingDirectory=Path.GetDirectoryName(ReleaseClient.RestartPath) });
+#endif
 		}
 		catch (Exception ex)
 		{

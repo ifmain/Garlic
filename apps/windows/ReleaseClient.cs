@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -38,7 +38,7 @@ internal static class ReleaseClient
         foreach (string dir in Directory.GetDirectories(Root))
         {
             Version v;
-            if (Version.TryParse(Path.GetFileName(dir), out v) && v > version && File.Exists(Path.Combine(dir,"Garlic.exe")))
+            if (Version.TryParse(Path.GetFileName(dir), out v) && v > version && (Previews || File.Exists(Path.Combine(dir,"stable.release"))) && File.Exists(Path.Combine(dir,"Garlic.exe")))
             { version = v; installed = Path.Combine(dir,"Garlic.exe"); }
         }
         if (string.Equals(self, installed, StringComparison.OrdinalIgnoreCase)) return true;
@@ -151,7 +151,7 @@ internal static class ReleaseClient
             if (count<30) return selected;
         }
     }
-    static void Install(string tag)
+    static void Install(string tag, bool preview)
     {
         string url = "https://github.com/ifmain/Garlic/releases/download/"+tag+"/"+Asset;
         byte[] signature = Fetch(url+".sig",1024);
@@ -161,9 +161,41 @@ internal static class ReleaseClient
         try {
             File.WriteAllBytes(tmp,file);
             if (FileVersionInfo.GetVersionInfo(tmp).ProductVersion != tag.Substring(6)) throw new InvalidDataException("Неверная версия обновления.");
+            if(preview && !Previews) throw new OperationCanceledException("Источник обновлений изменился.");
             using (var p = Process.Start(new ProcessStartInfo(tmp,"--install-only") {UseShellExecute=false,WorkingDirectory=Root}))
             { if (!p.WaitForExit(60000) || p.ExitCode != 0 || !File.Exists(Path.Combine(Root,tag.Substring(6),"Garlic.exe"))) throw new IOException("Не удалось установить обновление."); }
+            if(!preview) File.WriteAllText(Path.Combine(Root,tag.Substring(6),"stable.release"),"");
         } finally { if (File.Exists(tmp)) File.Delete(tmp); }
+    }
+    internal static string RestartPath;
+    static bool Prompt(Window owner, string title, string message, string action, string cancel)
+    {
+        var dialog = new Window { Owner=owner, Title=title, Icon=owner.Icon,
+            SizeToContent=SizeToContent.WidthAndHeight, ResizeMode=ResizeMode.NoResize,
+            WindowStartupLocation=WindowStartupLocation.CenterOwner, ShowInTaskbar=false };
+        var body = new System.Windows.Controls.StackPanel { Margin=new Thickness(24), Width=340 };
+        if(owner.Icon!=null) body.Children.Add(new System.Windows.Controls.Image {Source=owner.Icon, Width=40, Height=40});
+        body.Children.Add(new System.Windows.Controls.TextBlock { Text=message, TextWrapping=TextWrapping.Wrap,
+            Margin=new Thickness(0,12,0,16), FontSize=16 });
+        var buttons=new System.Windows.Controls.StackPanel {Orientation=System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment=HorizontalAlignment.Right};
+        foreach(string label in new[]{cancel,action}) {
+            if(label==null) continue;
+            var button=new System.Windows.Controls.Button { Content=label, Padding=new Thickness(12,6,12,6),Margin=new Thickness(4), IsDefault=label==action };
+            bool confirm=label==action;
+            button.Click+=delegate {dialog.DialogResult=confirm;};
+            buttons.Children.Add(button);
+        }
+        body.Children.Add(buttons); dialog.Content=body;
+        return dialog.ShowDialog()==true;
+    }
+    static void Installed(Window owner,string version,bool required)
+    {
+        if(Prompt(owner,"Garlic Alpha","Версия "+version+" установлена. Перезапустить Garlic сейчас?",
+                "Перезапустить Garlic",required ? null : "ОК")) {
+            RestartPath=Path.Combine(Root,version,"Garlic.exe");
+            Application.Current.Shutdown();
+        } else if(required) Application.Current.Shutdown();
     }
     static bool checking, manualRequested;
     internal static async void Check(Window window, bool manual = false)
@@ -179,17 +211,33 @@ internal static class ReleaseClient
             bool preview = release!=null && object.Equals(release["prerelease"],true);
             string tag = release==null || (preview && !Previews) ? null : (string)release["tag_name"];
             if (!window.IsVisible) return;
-            if (tag == null || File.Exists(Path.Combine(Root,tag.Substring(6),"Garlic.exe"))) {
-                if (manualRequested) MessageBox.Show(window,tag == null ? "Установлена последняя версия: "+GarlicBuild.Version : "Обновление уже установлено. Перезапустите Garlic.","Обновление Garlic");
+            if (tag == null) {
+                if(manualRequested) MessageBox.Show(window,"Установлена последняя версия: "+GarlicBuild.Version,"Garlic Alpha");
                 return;
             }
-            object notes;
-            bool important = release.TryGetValue("body", out notes) && SupportWarning(notes as string,GarlicBuild.Version,tag.Substring(6));
-            accepted = MessageBox.Show(window,(important ? "Поддержка вашей версии скоро закончится. Рекомендуем обновить Garlic.\n\n" : "") + "Скачать и установить " + (preview ? "пререлиз" : "релиз") + " Garlic Alpha " + tag.Substring(6) + "? Обновление откроется при следующем запуске.",
-                important ? "Важное обновление Garlic" : "Обновление Garlic",MessageBoxButton.YesNo,important ? MessageBoxImage.Warning : MessageBoxImage.Question) == MessageBoxResult.Yes;
-            if (!accepted) return;
-            await Task.Run(() => Install(tag));
-            if(window.IsVisible) MessageBox.Show(window,"Обновление установлено. При следующем запуске откроется новая версия.","Garlic Alpha");
+            object raw;
+            string notes=release.TryGetValue("body",out raw) ? raw as string : "";
+            string version=tag.Substring(6);
+            bool important=SupportWarning(notes,GarlicBuild.Version,version);
+            bool required=notes!=null && notes.TrimStart().StartsWith("<!-- garlic-required-floor:",StringComparison.Ordinal)
+                && SupportWarning(notes.Replace("garlic-required-floor:","garlic-support-floor:"),GarlicBuild.Version,version);
+            if(File.Exists(Path.Combine(Root,version,"Garlic.exe"))) {
+                if(!preview) File.WriteAllText(Path.Combine(Root,version,"stable.release"),"");
+                Installed(window,version,required);
+                return;
+            }
+            accepted=Prompt(window,required ? "Необходимо обновить Garlic" : "Обновление Garlic",
+                (required ? "Для продолжения работы требуется обновление. " : important ? "Поддержка вашей версии скоро закончится. " : "")+
+                "Доступен "+(preview ? "пререлиз " : "релиз ")+version+".","Обновить",required ? null : "Позже");
+            if (!accepted || (preview && !Previews)) {
+                if(required && (!preview || Previews)) Application.Current.Shutdown();
+                return;
+            }
+            if(required) window.IsEnabled=false;
+            try { await Task.Run(() => Install(tag,preview)); }
+            catch { if(required) Application.Current.Shutdown(); throw; }
+            finally { window.IsEnabled=true; }
+            if(!preview || Previews) Installed(window,version,required);
         }
         catch(Exception e) { GarlicApp.LogUi("update_error",e.GetType().Name); if ((accepted || manualRequested) && window.IsVisible) MessageBox.Show(window,e.Message,"Обновление Garlic"); }
         finally { checking = false; manualRequested = false; }

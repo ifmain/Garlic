@@ -112,6 +112,9 @@ public final class ReleaseUpdate {
                 final boolean preview=selected!=null && selected.getBoolean("prerelease");
                 final String version=selected==null?installed:selected.getString("tag_name").substring(6);
                 final boolean important=selected!=null && supportWarning(selected.optString("body"),installed,version);
+                String notes=selected==null?"":selected.optString("body");
+                final boolean required=notes.trim().startsWith("<!-- garlic-required-floor:")
+                    && supportWarning(notes.replace("garlic-required-floor:", "garlic-support-floor:"),installed,version);
                 a.runOnUiThread(() -> {
                     boolean notify=manualRequested;
                     checking=false;
@@ -121,9 +124,20 @@ public final class ReleaseUpdate {
                         if (notify) Toast.makeText(a,"Установлена последняя версия: "+installed,Toast.LENGTH_LONG).show();
                         return;
                     }
+                    if(required) {
+                        AlertDialog dialog=new AlertDialog.Builder(a).setTitle("Необходимо обновить Garlic")
+                            .setIcon(a.getApplicationInfo().icon)
+                            .setMessage("Для продолжения работы требуется версия "+version+".")
+                            .setCancelable(false).setPositiveButton("Обновить",null).create();
+                        dialog.show();
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                            if(!downloading && (!preview || previews(a))) download(a,version,preview);
+                        });
+                        return;
+                    }
                     new AlertDialog.Builder(a).setTitle(important ? "Важное обновление Garlic Alpha" : "Обновление Garlic Alpha")
                       .setMessage((important ? "Поддержка вашей версии скоро закончится. Рекомендуем обновить Garlic.\n\n" : "") + "Скачать и установить " + (preview?"пререлиз ":"релиз ") + version + "?")
-                      .setNegativeButton("Позже",null).setPositiveButton("Скачать",(d,w)->{ if(!preview || previews(a)) download(a,version); }).show();
+                      .setNegativeButton("Позже",null).setPositiveButton("Скачать",(d,w)->{ if(!preview || previews(a)) download(a,version,preview); }).show();
                 });
             } catch(Exception e) { android.util.Log.w("Garlic","Release check: "+e.getClass().getSimpleName());
                 a.runOnUiThread(() -> {
@@ -141,7 +155,7 @@ public final class ReleaseUpdate {
            (version!=null && !version.equals(apk.versionName)) || old.signingInfo==null || apk.signingInfo==null ||
            !Arrays.equals(old.signingInfo.getApkContentsSigners(),apk.signingInfo.getApkContentsSigners())) throw new IOException("Package verification failed");
     }
-    private static void download(Activity a,String version) {
+    private static void download(Activity a,String version,boolean preview) {
         downloading=true;
         new Thread(()->{
             File part=null;
@@ -151,7 +165,9 @@ public final class ReleaseUpdate {
                     fetch("https://github.com/ifmain/Garlic/releases/download/alpha-"+version+"/garlic-alpha.apk",out,64*1024*1024);
                 }
                 verify(a,part,version);
+                if(preview && !previews(a)) return;
                 java.nio.file.Files.move(part.toPath(),pending(a).toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                a.getSharedPreferences("garlic_prefs",0).edit().putBoolean("pending_preview",preview).apply();
                 a.runOnUiThread(()->install(a,true));
             } catch(Exception e) { a.runOnUiThread(()->Toast.makeText(a,"Не удалось скачать или проверить обновление",Toast.LENGTH_LONG).show()); }
             finally { if(part!=null) part.delete(); a.runOnUiThread(()->downloading=false); }
@@ -160,6 +176,7 @@ public final class ReleaseUpdate {
     public static void permissionResult(Activity a,int request) { if(request==PERMISSION) install(a,false); }
     private static void install(Activity a,boolean prompt) {
         try {
+            if(a.getSharedPreferences("garlic_prefs",0).getBoolean("pending_preview",false) && !previews(a)) return;
             if(!a.getPackageManager().canRequestPackageInstalls()) {
                 if(prompt) a.startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+a.getPackageName())),PERMISSION);
                 else Toast.makeText(a,"Разрешение на установку не выдано",Toast.LENGTH_LONG).show();

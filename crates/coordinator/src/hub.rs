@@ -26,6 +26,7 @@ struct Flow {
     exit_node: String,
     worker: Option<Uuid>,
     detached: Option<Instant>,
+    awaiting_client: Option<Instant>,
     client: broadcast::Sender<Arc<[u8]>>,
 }
 struct Pending {
@@ -201,6 +202,7 @@ impl Hub {
             .iter()
             .filter(|(_, f)| {
                 f.open.deadline_unix_ms <= now_ms
+                    || f.awaiting_client.is_some_and(|t| t.elapsed() > Duration::from_secs(60))
                     || f.detached
                         .is_some_and(|t| t.elapsed() > Duration::from_secs(60))
             })
@@ -250,6 +252,7 @@ impl Hub {
                     worker: Some(worker),
                     client,
                     detached: None,
+                    awaiting_client: Some(Instant::now()),
                 },
             );
             rx
@@ -286,15 +289,18 @@ impl Hub {
         id: Uuid,
         user: Uuid,
     ) -> Result<(Uuid, broadcast::Receiver<Arc<[u8]>>), ErrorCode> {
-        let s = self.0.lock().unwrap();
-        let f = s
-            .flows
-            .get(&id)
-            .or_else(|| s.flows.values().find(|f| f.open.stream_id == id))
-            .ok_or(ErrorCode::RouteUnavailable)?;
+        let mut s = self.0.lock().unwrap();
+        let flow_id = if s.flows.contains_key(&id) {
+            id
+        } else {
+            s.flows.values().find(|f| f.open.stream_id == id)
+                .map(|f| f.open.flow_id).ok_or(ErrorCode::RouteUnavailable)?
+        };
+        let f = s.flows.get_mut(&flow_id).ok_or(ErrorCode::RouteUnavailable)?;
         if f.open.user_id != user {
             return Err(ErrorCode::Forbidden);
         }
+        f.awaiting_client = None;
         Ok((f.open.flow_id, f.client.subscribe()))
     }
     pub async fn upstream(&self, id: Uuid, bytes: Vec<u8>) -> Result<(), ErrorCode> {
@@ -360,24 +366,8 @@ mod tests {
     use super::*;
     use garlic_relay_data::control::{Authority, Route};
 
-    #[tokio::test]
-    async fn pending_flow_reserves_a_user_share_until_cancelled() {
-        let hub = Hub::default();
-        let worker_id = Uuid::new_v4();
-        let (tx, mut worker) = mpsc::channel(8);
-        assert!(hub.register(
-            Hello {
-                protocol_version: 1,
-                worker_id,
-                node_id: "exit".into(),
-                capabilities: vec![],
-                max_streams: 2
-            },
-            "test".into(),
-            tx
-        ));
-        let user = Uuid::new_v4();
-        let open = StreamOpen {
+    fn test_open(user: Uuid) -> StreamOpen {
+        StreamOpen {
             control_version: 1,
             data_version: 1,
             node_id: "client".into(),
@@ -395,7 +385,57 @@ mod tests {
                 owner_id: Uuid::new_v4(),
                 epoch: 1,
             },
+        }
+    }
+
+    #[test]
+    fn cleanup_releases_only_unclaimed_reservations() {
+        let hub = Hub::default();
+        let user = Uuid::new_v4();
+        let new_flow = || Flow {
+            open: test_open(user),
+            exit_node: "exit".into(),
+            worker: None,
+            client: broadcast::channel(4).0,
+            detached: None,
+            awaiting_client: Some(Instant::now() - Duration::from_secs(61)),
         };
+        let stale = new_flow();
+        let active = new_flow();
+        let stale_id = stale.open.flow_id;
+        let active_id = active.open.flow_id;
+        let stream_id = active.open.stream_id;
+        {
+            let mut state = hub.0.lock().unwrap();
+            state.flows.insert(stale_id, stale);
+            state.flows.insert(active_id, active);
+        }
+        assert!(matches!(hub.subscribe(stale_id, Uuid::new_v4()), Err(ErrorCode::Forbidden)));
+        let (_id, _receiver) = hub.subscribe(stream_id, user).unwrap();
+        hub.cleanup(0);
+        let state = hub.0.lock().unwrap();
+        assert!(!state.flows.contains_key(&stale_id));
+        assert!(state.flows.contains_key(&active_id));
+    }
+
+    #[tokio::test]
+    async fn pending_flow_reserves_a_user_share_until_cancelled() {
+        let hub = Hub::default();
+        let worker_id = Uuid::new_v4();
+        let (tx, mut worker) = mpsc::channel(8);
+        assert!(hub.register(
+            Hello {
+                protocol_version: 1,
+                worker_id,
+                node_id: "exit".into(),
+                capabilities: vec![],
+                max_streams: 2
+            },
+            "test".into(),
+            tx
+        ));
+        let user = Uuid::new_v4();
+        let open = test_open(user);
         {
             let mut pending = Box::pin(hub.open(open, false));
             tokio::select! {
