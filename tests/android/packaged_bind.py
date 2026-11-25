@@ -62,7 +62,7 @@ def run(directory, abi, required, methods):
         elif name=="dlsym": result=core.get(string(b),0)
         elif name=="strlen": result=len(string(a))
         elif name=="memcmp": result=int(cpu.mem_read(a,c)!=cpu.mem_read(b,c))
-        elif name=="memcpy": cpu.mem_write(a,bytes(cpu.mem_read(b,c)));result=a
+        elif name in ("memcpy","__aeabi_memcpy","__aeabi_memcpy4","__aeabi_memcpy8"): cpu.mem_write(a,bytes(cpu.mem_read(b,c)));result=a
         elif name=="class": result=int(string(b)=="org/garlic/client/GarlicBridge")
         elif name=="method": result=int((string(c),string(d)) in methods)
         elif name=="register":
@@ -98,6 +98,12 @@ if __name__=="__main__":
         required=opt.app_version
     methods=set(re.findall(r"\.method public static native (\w+)(\(.*)",(classes/"GarlicBridge.smali").read_text()))
     assert methods
+    # The JNI stubs below cannot detect missing platform libraries at dlopen.
+    for library in (opt.decoded / "lib").glob("*/libgarlic_bind.so"):
+        with library.open("rb") as f:
+            elf = ELFFile(f)
+            dependencies = {tag.needed for tag in elf.get_section_by_name(".dynamic").iter_tags("DT_NEEDED")}
+            assert {"libc.so", "libdl.so"} <= dependencies, (library, dependencies)
     for abi in ("arm64-v8a","armeabi-v7a"):
         ok,count=run(opt.decoded,abi,required,methods)
         print(abi, "bind",ok,"registered",count)

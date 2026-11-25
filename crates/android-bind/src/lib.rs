@@ -15,6 +15,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 }
 
 #[cfg(target_os = "android")]
+#[link(name = "c")]
 extern "C" {
     fn abort() -> !;
 }
