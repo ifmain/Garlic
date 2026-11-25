@@ -97,19 +97,44 @@ internal static class ReleaseClient
         using (var rsa = new RSACryptoServiceProvider(new CspParameters(24) { Flags = CspProviderFlags.CreateEphemeralKey }))
         { rsa.FromXmlString(reader.ReadToEnd()); return rsa.VerifyData(file, "SHA256", signature); }
     }
-    static string Latest()
+    static string ChannelFile { get { return Path.ChangeExtension(Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"),"include-prereleases"); } }
+    internal static bool Previews { get { return File.Exists(ChannelFile); } }
+    internal static void SetPreviews(bool enable)
     {
-        var releases = new JavaScriptSerializer().Deserialize<Dictionary<string,object>[]>(System.Text.Encoding.UTF8.GetString(
-            Fetch("https://api.github.com/repos/ifmain/Garlic/releases?per_page=30", 1024*1024)));
-        Version newest = Version.Parse(GarlicBuild.Version); string selected = null;
-        foreach (var release in releases)
-        {
-            string tag = release["tag_name"] as string; Version v;
-            if (object.Equals(release["draft"],false) && object.Equals(release["prerelease"],false) &&
-                tag != null && tag.StartsWith("alpha-",StringComparison.Ordinal) && Version.TryParse(tag.Substring(6),out v) &&
-                v.ToString() == tag.Substring(6) && v > newest) { newest = v; selected = tag; }
+        if (enable) {
+            Directory.CreateDirectory(Path.GetDirectoryName(ChannelFile));
+            File.WriteAllText(ChannelFile,"");
+        } else File.Delete(ChannelFile);
+    }
+    internal static Dictionary<string,object> SelectRelease(Dictionary<string,object>[] releases, bool previews)
+    {
+        Version installed = Version.Parse(GarlicBuild.Version);
+        Dictionary<string,object> selected = null;
+        string newest = ""; Version selectedVersion = installed;
+        foreach (var release in releases) {
+            string tag = release["tag_name"] as string;
+            Version v;
+            if (!object.Equals(release["draft"],false) || !(object.Equals(release["prerelease"],false) || previews)
+                || tag == null || !tag.StartsWith("alpha-",StringComparison.Ordinal)
+                || !Version.TryParse(tag.Substring(6),out v) || v.ToString()!=tag.Substring(6) || v<=installed) continue;
+            string date=(string)release["published_at"];
+            int order=string.CompareOrdinal(date,newest);
+            if (order>0 || (order==0 && v>selectedVersion)) { newest=date; selectedVersion=v; selected=release; }
         }
         return selected;
+    }
+    static Dictionary<string,object> Latest()
+    {
+        bool previews=Previews;
+        Dictionary<string,object> selected=null;
+        for (int page=1; ; page++) {
+            var releases = new JavaScriptSerializer().Deserialize<Dictionary<string,object>[]>(System.Text.Encoding.UTF8.GetString(
+                Fetch("https://api.github.com/repos/ifmain/Garlic/releases?per_page=30&page="+page,4*1024*1024)));
+            int count=releases.Length;
+            if(selected!=null) { Array.Resize(ref releases,count+1); releases[count]=selected; }
+            selected=SelectRelease(releases,previews);
+            if (count<30) return selected;
+        }
     }
     static void Install(string tag)
     {
@@ -135,13 +160,15 @@ internal static class ReleaseClient
         try
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            string tag = await Task.Run((Func<string>)Latest);
+            var release = await Task.Run(() => Latest());
+            bool preview = release!=null && object.Equals(release["prerelease"],true);
+            string tag = release==null || (preview && !Previews) ? null : (string)release["tag_name"];
             if (!window.IsVisible) return;
             if (tag == null || File.Exists(Path.Combine(Root,tag.Substring(6),"Garlic.exe"))) {
                 if (manualRequested) MessageBox.Show(window,tag == null ? "Установлена последняя версия: "+GarlicBuild.Version : "Обновление уже установлено. Перезапустите Garlic.","Обновление Garlic");
                 return;
             }
-            accepted = MessageBox.Show(window,"Скачать и установить Garlic Alpha " + tag.Substring(6) + "? Обновление откроется при следующем запуске.",
+            accepted = MessageBox.Show(window,"Скачать и установить " + (preview ? "пререлиз" : "релиз") + " Garlic Alpha " + tag.Substring(6) + "? Обновление откроется при следующем запуске.",
                 "Обновление Garlic",MessageBoxButton.YesNo,MessageBoxImage.Question) == MessageBoxResult.Yes;
             if (!accepted) return;
             await Task.Run(() => Install(tag));

@@ -16,6 +16,47 @@ import android.provider.Settings;
 import android.widget.Toast;
 
 public final class BackgroundSettings {
+    private static volatile String clockWarning = "";
+
+    public static void updateClockWarning(org.json.JSONObject status) {
+        clockWarning = status.optString("clock_warning", "");
+    }
+
+    public static String connectionLabel(String normal) {
+        String warning = clockWarning;
+        return warning.isEmpty() ? normal : normal + "\n" + warning;
+    }
+
+    private static final WakeRecovery wakeRecovery = new WakeRecovery();
+
+    static final class WakeRecovery {
+        private long sleep = -1, until, baselineFailures, rx, tx;
+        boolean sample(long now, long uptime, long failed, long received, long sent, String error) {
+            long totalSleep = now - uptime;
+            if (sleep >= 0 && totalSleep - sleep >= 10000) {
+                until = now + 60000;
+                baselineFailures = failed;
+            }
+            sleep = totalSleep;
+            if (rx != received || tx != sent) until = 0;
+            rx = received;
+            tx = sent;
+            if (until == 0 || now > until || failed <= baselineFailures) return false;
+            String e = error.toLowerCase(java.util.Locale.ROOT);
+            if (!(e.contains("timed out") || e.contains("timeout") || e.contains("connection reset")
+                    || e.contains("broken pipe") || e.contains("network is unreachable") || e.contains("unexpected eof"))) return false;
+            until = 0;
+            return true;
+        }
+    }
+
+    public static boolean stalledAfterSleep(org.json.JSONObject status) {
+        org.json.JSONObject failure = status.optJSONObject("last_route_failure");
+        return wakeRecovery.sample(android.os.SystemClock.elapsedRealtime(), android.os.SystemClock.uptimeMillis(),
+            status.optLong("failed_streams"), status.optLong("rx_bytes"), status.optLong("tx_bytes"),
+            failure == null ? "" : failure.optString("error"));
+    }
+
     private static final int EXPORT_LOG = 4701;
 
     private static java.io.File logs(Context a) {
@@ -145,7 +186,7 @@ public final class BackgroundSettings {
         PowerManager power = (PowerManager)a.getSystemService(Context.POWER_SERVICE);
         NotificationManager notifications = (NotificationManager)a.getSystemService(Context.NOTIFICATION_SERVICE);
         String battery = power.isIgnoringBatteryOptimizations(a.getPackageName())
-            ? "Без оптимизации батареи" : "Системная оптимизация батареи";
+            ? "Разрешена работа без оптимизации батареи" : "Разрешить VPN работать в режиме сна";
         String notice = notifications.areNotificationsEnabled()
             ? "Уведомления включены" : "Уведомления выключены";
         new AlertDialog.Builder(a).setTitle("Работа в фоне")
@@ -161,7 +202,13 @@ public final class BackgroundSettings {
                     case 0:
                         intent = appSettings(a);
                         break;
-                    case 1: intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS); break;
+                    case 1:
+                        intent = power.isIgnoringBatteryOptimizations(a.getPackageName())
+                            ? new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                            : new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.fromParts("package",a.getPackageName(),null));
+                        if (intent.resolveActivity(a.getPackageManager()) == null)
+                            intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                        break;
                     default: intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                                  .putExtra(Settings.EXTRA_APP_PACKAGE, a.getPackageName());
                 }

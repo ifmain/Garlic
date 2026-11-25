@@ -43,6 +43,7 @@ fn vpn_bootstrap_keeps_usable_routes_and_pins_exchange_socket() {
 #[derive(Clone)]
 pub struct Api {
     client: Client,
+    clock_sample: std::sync::Arc<std::sync::Mutex<Option<(u64, std::time::Instant)>>>,
     #[cfg(windows)]
     bootstrap: Option<Arc<BTreeMap<String, Vec<SocketAddr>>>>,
 }
@@ -50,9 +51,15 @@ impl Api {
     pub fn new(cfg: &Config) -> Result<Self, StateError> {
         Ok(Self {
             client: Self::builder(cfg)?.build()?,
+            clock_sample: Default::default(),
             #[cfg(windows)]
             bootstrap: None,
         })
+    }
+
+    pub(crate) fn clock_warning(&self) -> Option<&'static str> {
+        let (server, sampled) = (*self.clock_sample.lock().unwrap())?;
+        clock_warning(time(), server, sampled.elapsed().as_secs())
     }
 
     fn builder(cfg: &Config) -> Result<reqwest::blocking::ClientBuilder, StateError> {
@@ -140,6 +147,7 @@ impl Api {
         Ok((
             Self {
                 client: builder.build()?,
+                clock_sample: Default::default(),
                 bootstrap: Some(Arc::new(bootstrap)),
             },
             bypass,
@@ -177,6 +185,7 @@ impl Api {
         if let Some(body) = body {
             req = req.json(body);
         }
+        let sent = std::time::Instant::now();
         let response = req.send().map_err(|e| {
             // The nested error distinguishes a TCP failure from a TLS trust
             // failure. Request URLs and authorization headers stay private.
@@ -193,6 +202,14 @@ impl Api {
             }
             reason
         })?;
+        if path == "/v1/auth/info" && endpoint.starts_with("https://") && response.status().is_success() && sent.elapsed().as_secs() < 5 {
+            if let Some(timestamp) = response.headers().get(reqwest::header::DATE)
+                .and_then(|date| date.to_str().ok())
+                .and_then(|date| chrono::DateTime::parse_from_rfc2822(date).ok())
+                .and_then(|date| u64::try_from(date.timestamp()).ok()) {
+                *self.clock_sample.lock().unwrap() = Some((timestamp, std::time::Instant::now()));
+            }
+        }
         let status = response.status();
         let relay = response.headers().get("x-garlic-relay-transport")
             .and_then(|h| h.to_str().ok()).filter(|v| matches!(*v, "relay-shaped-v2" | "relay-tls-v1" | "direct-egress")).map(str::to_owned);
@@ -467,4 +484,26 @@ impl Api {
         }
         Err(last)
     }
+}
+
+fn clock_warning(local: u64, server: u64, age: u64) -> Option<&'static str> {
+    if age > 120 { return None; }
+    let server_now = server.saturating_add(age);
+    if local.saturating_sub(server_now) >= 60 {
+        Some("Часы устройства спешат относительно сервера. Проверьте дату и включите автоматическую установку времени.")
+    } else if server_now.saturating_sub(local) >= 60 {
+        Some("Часы устройства отстают относительно сервера. Проверьте дату и включите автоматическую установку времени.")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn clock_warning_requires_a_recent_measurement_and_a_minute_of_skew() {
+    assert!(clock_warning(1065, 1000, 5).unwrap().contains("спешат"));
+    assert!(clock_warning(945, 1000, 5).unwrap().contains("отстают"));
+    assert_eq!(clock_warning(1064, 1000, 5), None);
+    assert_eq!(clock_warning(1005, 1000, 5), None);
+    assert_eq!(clock_warning(2000, 1000, 121), None);
 }

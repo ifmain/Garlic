@@ -74,6 +74,8 @@
 
     invoke-direct {v6, v0}, Lorg/json/JSONObject;-><init>(Ljava/lang/String;)V
 
+    invoke-static {v6}, Lorg/garlic/client/BackgroundSettings;->updateClockWarning(Lorg/json/JSONObject;)V
+
     .line 52
     const-string v0, "network_ready"
 
@@ -565,6 +567,9 @@
 
     .line 68
     :cond_a
+    invoke-static {v6}, Lorg/garlic/client/BackgroundSettings;->stalledAfterSleep(Lorg/json/JSONObject;)Z
+    move-result v0
+    if-nez v0, :cond_c
     const-string v0, "proxy"
 
     invoke-virtual {v6, v0}, Lorg/json/JSONObject;->optBoolean(Ljava/lang/String;)Z

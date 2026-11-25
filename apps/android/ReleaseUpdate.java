@@ -43,6 +43,33 @@ public final class ReleaseUpdate {
         }
         return false;
     }
+    private static boolean previews(Activity a) {
+        return a.getSharedPreferences("garlic_prefs",0).getBoolean("release_previews",false);
+    }
+    public static String[] withChannel(String[] items) {
+        String[] result=Arrays.copyOf(items,items.length+1);
+        result[items.length]="Источник обновлений";
+        return result;
+    }
+    public static void channel(Activity a) {
+        new AlertDialog.Builder(a).setTitle("Источник обновлений")
+            .setSingleChoiceItems(new String[]{"Стабильные релизы","Релизы и пререлизы"},previews(a)?1:0,(dialog,which)->{
+                a.getSharedPreferences("garlic_prefs",0).edit().putBoolean("release_previews",which==1).apply();
+                dialog.dismiss();
+            }).show();
+    }
+    static JSONObject select(JSONArray items, String installed, boolean previews) throws Exception {
+        JSONObject best=null;
+        for(int i=0;i<items.length();i++) {
+            JSONObject item=items.getJSONObject(i);
+            String tag=item.optString("tag_name");
+            if(item.getBoolean("draft") || (item.getBoolean("prerelease") && !previews)
+                    || !tag.startsWith("alpha-") || !newer(tag.substring(6),installed)) continue;
+            if(best==null || item.getString("published_at").compareTo(best.getString("published_at"))>0 ||
+                    (item.getString("published_at").equals(best.getString("published_at")) && newer(tag.substring(6),best.getString("tag_name").substring(6)))) best=item;
+        }
+        return best;
+    }
     public static void addButton(Activity a, android.widget.LinearLayout parent) {
         android.widget.Button button = ((SecondaryButtons)a).secondaryButton("Обновить с GitHub");
         button.setOnClickListener(v -> check(a, true));
@@ -64,27 +91,31 @@ public final class ReleaseUpdate {
         new Thread(() -> {
             try {
                 String installed=a.getPackageManager().getPackageInfo(a.getPackageName(),0).versionName;
-                String best=installed;
-                ByteArrayOutputStream out=new ByteArrayOutputStream();
-                fetch("https://api.github.com/repos/ifmain/Garlic/releases?per_page=30",out,1024*1024);
-                JSONArray items=new JSONArray(out.toString("UTF-8"));
-                for(int i=0;i<items.length();i++) {
-                    JSONObject item=items.getJSONObject(i);String tag=item.getString("tag_name");
-                    if(!item.getBoolean("draft") && !item.getBoolean("prerelease") && tag.startsWith("alpha-") && newer(tag.substring(6),best)) best=tag.substring(6);
+                boolean allowPreview=previews(a);
+                JSONObject selected=null;
+                for(int page=1; ; page++) {
+                    ByteArrayOutputStream out=new ByteArrayOutputStream();
+                    fetch("https://api.github.com/repos/ifmain/Garlic/releases?per_page=30&page="+page,out,4*1024*1024);
+                    JSONArray items=new JSONArray(out.toString("UTF-8"));
+                    int count=items.length();
+                    if(selected!=null) items.put(selected);
+                    selected=select(items,installed,allowPreview);
+                    if(count<30) break;
                 }
-                final String version=best;
+                final boolean preview=selected!=null && selected.getBoolean("prerelease");
+                final String version=selected==null?installed:selected.getString("tag_name").substring(6);
                 a.runOnUiThread(() -> {
                     boolean notify=manualRequested;
                     checking=false;
                     manualRequested=false;
                     if (a.isFinishing() || a.isDestroyed()) return;
-                    if (version.equals(installed)) {
+                    if (version.equals(installed) || (preview && !previews(a))) {
                         if (notify) Toast.makeText(a,"Установлена последняя версия: "+installed,Toast.LENGTH_LONG).show();
                         return;
                     }
                     new AlertDialog.Builder(a).setTitle("Обновление Garlic Alpha")
-                      .setMessage("Скачать и установить версию " + version + "?")
-                      .setNegativeButton("Позже",null).setPositiveButton("Скачать",(d,w)->download(a,version)).show();
+                      .setMessage("Скачать и установить " + (preview?"пререлиз ":"релиз ") + version + "?")
+                      .setNegativeButton("Позже",null).setPositiveButton("Скачать",(d,w)->{ if(!preview || previews(a)) download(a,version); }).show();
                 });
             } catch(Exception e) { android.util.Log.w("Garlic","Release check: "+e.getClass().getSimpleName());
                 a.runOnUiThread(() -> {

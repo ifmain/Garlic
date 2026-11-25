@@ -628,11 +628,12 @@ public sealed class GarlicApp
 				"proxy-status",
 				(mode == 1) ? "127.0.0.1:10888" : "127.0.0.1:1080"
 			});
+			string clockWarning = Text(Get(status, "clock_warning"));
 			if (object.Equals(Get(status, "vpn_initializing"), true) || object.Equals(Get(status, "network_ready"), false))
 			{
 				connected = false;
 				pending = true;
-				C<TextBlock>("RouteInfo").Text = "";
+				C<TextBlock>("RouteInfo").Text = clockWarning;
 				C<TextBlock>("Connection").Text = "Настраиваем VPN…";
 				C<Button>("Power").Content = "Отключить";
 				return;
@@ -727,6 +728,7 @@ public sealed class GarlicApp
 				text6 = "ожидание соединения";
 			}
 			textBlock7.Text = text5 + "\nКаналы: " + text6;
+			if (!string.IsNullOrEmpty(clockWarning)) textBlock7.Text += "\n" + clockWarning;
 			if (mode == 0 && !object.Equals(Get(status, "tunnel"), true))
 			{
 				throw new InvalidOperationException("Device tunnel is not running");
@@ -1020,7 +1022,7 @@ public sealed class GarlicApp
 		}
 		string[] array = new string[]
 		{
-			"PluginsButton", "UpdateButton", "LogsButton", "HomeButton", "ServersButton", "NodeTitle", "UsersButton", "Logo", "Auth", "Home", "Admin", "Server",
+			"PluginsButton", "ChannelButton", "UpdateButton", "LogsButton", "HomeButton", "ServersButton", "NodeTitle", "UsersButton", "Logo", "Auth", "Home", "Admin", "Server",
 			"Key", "Login", "Connection", "Subscription", "Power", "TunnelMode", "TunnelHint", "Route", "Takeover", "Logout",
 			"Username", "Days", "Unlimited", "Create", "Issue", "ChangeSub", "Toggle", "RoleButton", "Remove", "Users",
 			"Message", "RouteInfo", "Statistics", "ShowStatistics", "Servers", "Nodes", "StreamLimit", "WorkerLimit", "SaveServer", "RefreshServers",
@@ -1169,6 +1171,22 @@ public sealed class GarlicApp
         }
         C<Button>("PluginsButton").Click += delegate {
             PluginFiles.Show(window, C<Button>("PluginsButton"), Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"), Say, async (id,url,key) => { await Cli(id==null?new[]{"plugin-key",url,"--key-stdin"}:new[]{"plugin-slot-key",id,url,"--key-stdin"},key); });
+        };
+        var channelButton = C<Button>("ChannelButton");
+        channelButton.Visibility = Visibility.Visible;
+        channelButton.Click += delegate {
+            var menu = new ContextMenu();
+            foreach (bool previews in new[] { false, true }) {
+                bool selected = previews;
+                var item = new MenuItem { Header = selected ? "Релизы и пререлизы" : "Стабильные релизы", IsChecked = ReleaseClient.Previews == selected };
+                item.Click += delegate {
+                    try { ReleaseClient.SetPreviews(selected); }
+                    catch (Exception error) { MessageBox.Show(window,error.Message,"Источник обновлений"); }
+                };
+                menu.Items.Add(item);
+            }
+            menu.PlacementTarget = channelButton;
+            menu.IsOpen = true;
         };
         C<Button>("UpdateButton").Visibility = Visibility.Visible;
         C<Button>("UpdateButton").Click += delegate { ReleaseClient.Check(window, true); };
@@ -1697,7 +1715,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.11";
+    internal const string Version = "0.9.13";
 #else
     internal const string Version = "0.9.2";
 #endif

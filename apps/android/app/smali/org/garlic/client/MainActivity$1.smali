@@ -267,6 +267,11 @@
     const-string v0, "\u041d\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043e"
 
     :goto_5
+    sget-boolean v3, Lorg/garlic/client/GarlicProxyService;->isRunning:Z
+    if-eqz v3, :clock_label_ready
+    invoke-static {v0}, Lorg/garlic/client/BackgroundSettings;->connectionLabel(Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v0
+    :clock_label_ready
     invoke-static {v1, v2, v0}, Lorg/garlic/client/MainActivity;->-$$Nest$mupdateText(Lorg/garlic/client/MainActivity;Landroid/widget/TextView;Ljava/lang/String;)V
 
     .line 48

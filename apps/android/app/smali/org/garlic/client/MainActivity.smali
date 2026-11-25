@@ -4263,6 +4263,11 @@
     invoke-static {p0}, Lorg/garlic/client/BackgroundSettings;->exportLogs(Landroid/app/Activity;)V
     return-void
     :alpha_apps
+    const/4 v0, 0x5
+    if-ne p2, v0, :pick_apps
+    invoke-static {p0}, Lorg/garlic/client/ReleaseUpdate;->channel(Landroid/app/Activity;)V
+    return-void
+    :pick_apps
     invoke-direct {p0}, Lorg/garlic/client/MainActivity;->chooseApps()V
 
     :goto_0
@@ -4307,6 +4312,9 @@
 
     filled-new-array {v0, v1, v2, v3, v4}, [Ljava/lang/String;
 
+    move-result-object v0
+
+    invoke-static {v0}, Lorg/garlic/client/ReleaseUpdate;->withChannel([Ljava/lang/String;)[Ljava/lang/String;
     move-result-object v0
 
     new-instance v1, Lorg/garlic/client/MainActivity$40;

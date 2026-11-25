@@ -139,6 +139,9 @@ impl Proxy {
             &self.failed.lock().unwrap(),
             self.cooldown,
         );
+        if let Some(message) = self.api.clock_warning() {
+            value["clock_warning"] = Value::from(message);
+        }
         if let Some(ready) = &self.tunnel_ready {
             let ready = ready.load(Ordering::Acquire);
             value["tunnel"] = Value::Bool(ready);
