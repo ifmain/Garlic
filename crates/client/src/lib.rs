@@ -1,3 +1,4 @@
+mod pairing;
 #[cfg(any(target_os = "android", feature = "jni-test"))]
 mod android;
 mod api;
@@ -127,7 +128,7 @@ pub fn run(args: &[&str]) -> Result<Value, StateError> {
         status?;
         return Ok(json!({"ok":true}));
     }
-    let api = Api::new(&cfg)?;
+    let api = Api::new(&cfg, &settings)?;
     match args {
         ["proxy-status", address] => api.proxy_status(address.parse()?),
         ["proxy-status"] => api.proxy_status(default_proxy_bind()?),

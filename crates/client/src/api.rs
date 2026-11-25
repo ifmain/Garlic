@@ -29,7 +29,7 @@ fn vpn_bootstrap_keeps_usable_routes_and_pins_exchange_socket() {
         storage_urls: vec!["https://127.0.0.1:18443".into()],
         ..Config::default()
     };
-    let (api, bypass) = Api::for_windows_vpn(&mut config,false).unwrap();
+    let (api, bypass) = Api::for_windows_vpn(&mut config,false,&Settings { config: std::env::temp_dir().join("garlic-unit.json") }).unwrap();
     assert_eq!(config.control_urls, ["https://198.51.100.2:8443"]);
     assert_eq!(config.storage_urls, ["https://127.0.0.1:18443"]);
     assert_eq!(bypass, BTreeSet::from([Ipv4Addr::new(198, 51, 100, 2)]));
@@ -43,39 +43,46 @@ fn vpn_bootstrap_keeps_usable_routes_and_pins_exchange_socket() {
 #[derive(Clone)]
 pub struct Api {
     client: Client,
-    #[cfg(any(target_os = "android", windows))]
-    network_client: Client,
+    pairing: std::sync::Arc<crate::pairing::Pairing>,
+    config: Config,
     clock_sample: std::sync::Arc<std::sync::Mutex<Option<(u64, std::time::Instant)>>>,
     #[cfg(windows)]
     bootstrap: Option<Arc<BTreeMap<String, Vec<SocketAddr>>>>,
 }
-#[cfg(any(target_os = "android", windows))]
-pub(crate) const NETWORK_CA: &[u8] = include_bytes!("legacy-network-ca.der");
-
-#[cfg(any(target_os = "android", windows))]
-pub(crate) fn legacy_gateway(host: &str) -> bool {
-    matches!(host, "s1.cs2u.ru" | "s2.cs2u.ru" | "t1.cs2u.ru" |
-        "179.254.142.243" | "179.254.152.111" | "80.64.31.193" |
-        "212.34.147.227" | "194.87.111.169")
-}
-
 impl Api {
-    fn client_for(&self, _origin: &str) -> &Client {
-        #[cfg(any(target_os = "android", windows))]
-        if reqwest::Url::parse(_origin).ok().is_some_and(|u|
-            u.scheme() == "https" && u.host_str().is_some_and(legacy_gateway)) {
-            return &self.network_client;
-        }
-        &self.client
+    fn paired(&self, endpoint: &str, fetch: bool) -> Result<Option<crate::pairing::Paired>, StateError> {
+        self.pairing.resolve(endpoint,fetch,&self.client,|der| {
+            let mut builder = Self::builder(&self.config)?.add_root_certificate(reqwest::Certificate::from_der(der)?);
+            #[cfg(windows)]
+            if let Some(peers) = &self.bootstrap {
+                for (host,addrs) in peers.iter() { builder = builder.resolve_to_addrs(host,addrs); }
+            }
+            Ok(builder.build()?)
+        })
     }
 
-    pub fn new(cfg: &Config) -> Result<Self, StateError> {
+    pub(crate) fn exchange_ca(&self, endpoint: &str) -> Result<Option<Vec<u8>>,StateError> {
+        Ok(self.paired(endpoint,false)?.map(|p| p.der))
+    }
+
+    fn send(&self, endpoint: &str, request: impl Fn(&Client)->reqwest::blocking::RequestBuilder)
+        -> Result<reqwest::blocking::Response, StateError> {
+        let known = self.paired(endpoint,false)?;
+        let initial = request(known.as_ref().map(|p| &p.client).unwrap_or(&self.client)).send();
+        match initial {
+            Err(e) if crate::pairing::unknown_issuer(&e) => {
+                let paired = self.paired(endpoint,true)?.ok_or("network CA unavailable")?;
+                Ok(request(&paired.client).send()?)
+            }
+            other => Ok(other?),
+        }
+    }
+
+    pub fn new(cfg: &Config, settings: &Settings) -> Result<Self, StateError> {
         Ok(Self {
             client: Self::builder(cfg)?.build()?,
-            #[cfg(any(target_os = "android", windows))]
-            network_client: Self::builder(cfg)?
-                .add_root_certificate(reqwest::Certificate::from_der(NETWORK_CA)?)
-                .build()?,
+            pairing: std::sync::Arc::new(crate::pairing::Pairing::new(settings)),
+            config: cfg.clone(),
             clock_sample: Default::default(),
             #[cfg(windows)]
             bootstrap: None,
@@ -126,11 +133,10 @@ impl Api {
 
     #[cfg(windows)]
     pub(crate) fn for_windows_vpn(
-        cfg: &mut Config, allow_plugin_only:bool,
+        cfg: &mut Config, allow_plugin_only:bool, settings: &Settings,
     ) -> Result<(Self, BTreeSet<Ipv4Addr>), StateError> {
         use std::net::IpAddr;
 
-        let mut network_builder = Self::builder(cfg)?.add_root_certificate(reqwest::Certificate::from_der(NETWORK_CA)?);
         let mut bootstrap = BTreeMap::new();
         let mut bypass = BTreeSet::new();
         let mut builder = Self::builder(cfg)?;
@@ -157,7 +163,6 @@ impl Api {
                 _ => None,
             }));
             builder = builder.resolve_to_addrs(host, &peers);
-            network_builder = network_builder.resolve_to_addrs(host, &peers);
             bootstrap.insert(host.to_owned(), peers);
         }
         for urls in [&mut cfg.control_urls, &mut cfg.storage_urls] {
@@ -174,7 +179,8 @@ impl Api {
         Ok((
             Self {
                 client: builder.build()?,
-                network_client: network_builder.build()?,
+                pairing: std::sync::Arc::new(crate::pairing::Pairing::new(settings)),
+                config: cfg.clone(),
                 clock_sample: Default::default(),
                 bootstrap: Some(Arc::new(bootstrap)),
             },
@@ -182,8 +188,9 @@ impl Api {
         ))
     }
     pub(crate) fn route_probe(&self, endpoint: &str, token: &str) -> Result<u64, StateError> {
-        let response = self.client_for(endpoint).get(format!("{}/v1/auth/info", origin(endpoint)?))
-            .bearer_auth(token).timeout(Duration::from_secs(2)).send()?.error_for_status()?;
+        let url = format!("{}/v1/auth/info", origin(endpoint)?);
+        let response = self.send(endpoint, |client| client.get(&url)
+            .bearer_auth(token).timeout(Duration::from_secs(2)))?.error_for_status()?;
         let mut data = Vec::new();
         response.take(16385).read_to_end(&mut data)?;
         if data.len() > 16384 { return Err("route probe exceeded size limit".into()); }
@@ -201,22 +208,18 @@ impl Api {
         device: Option<&str>,
         body: Option<&Value>,
     ) -> Result<Value, StateError> {
-        let mut req = self.client_for(endpoint)
-            .request(method, format!("{}{path}", origin(endpoint)?));
-        if let Some(token) = bearer {
-            req = req.bearer_auth(token);
-        }
-        if let Some(token) = device {
-            req = req.header("x-garlic-device-token", token);
-        }
-        if let Some(body) = body {
-            req = req.json(body);
-        }
+        let url = format!("{}{path}", origin(endpoint)?);
         let sent = std::time::Instant::now();
-        let response = req.send().map_err(|e| {
+        let response = self.send(endpoint, |client| {
+            let mut req = client.request(method.clone(), &url);
+            if let Some(token) = bearer { req = req.bearer_auth(token); }
+            if let Some(token) = device { req = req.header("x-garlic-device-token",token); }
+            if let Some(body) = body { req = req.json(body); }
+            req
+        }).map_err(|e| {
             // The nested error distinguishes a TCP failure from a TLS trust
             // failure. Request URLs and authorization headers stay private.
-            let e = e.without_url();
+            let e = match e.downcast::<reqwest::Error>() { Ok(e) => (*e).without_url(), Err(e) => return e.to_string() };
             let mut reason = e.to_string();
             let mut source = std::error::Error::source(&e);
             while let Some(cause) = source {

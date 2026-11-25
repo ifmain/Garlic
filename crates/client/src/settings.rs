@@ -326,6 +326,7 @@ impl Settings {
             },
         )?;
         for name in [
+            "pairing.json",
             "account-cache.json",
             "network.json",
             "device.json",

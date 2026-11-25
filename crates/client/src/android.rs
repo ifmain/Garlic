@@ -101,7 +101,7 @@ fn android_api(dir: &str, origins: &str) -> Result<(Settings, Config, Api), Stat
     let mut cfg = settings.load()?;
     cfg.control_urls = urls(origins)?;
     cfg.storage_urls.clear();
-    let api = Api::new(&cfg)?;
+    let api = Api::new(&cfg, &settings)?;
     Ok((settings, cfg, api))
 }
 fn admin(dir: &str, origins: &str, operation: &str, body: Option<&str>) -> Reply {
@@ -114,7 +114,7 @@ entry!(
     (dir, url, key),
     {
         let settings = profile(&dir)?;
-        Api::new(&settings.load()?)?.connect(&settings, &url, &key)
+        Api::new(&settings.load()?, &settings)?.connect(&settings, &url, &key)
     }
 );
 entry!(
@@ -214,7 +214,7 @@ entry!(
             Ok(())
         })?;
         proxy::apply_connections(&settings, &mut cfg)?;
-        let api = Api::new(&cfg)?;
+        let api = Api::new(&cfg, &settings)?;
         let api_thread = api.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let signal = stop.clone();

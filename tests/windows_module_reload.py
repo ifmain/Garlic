@@ -32,7 +32,7 @@ STOCK = Path(os.environ.get("GARLIC_STOCK_CLIENT", CORE))
 DEFAULT = json.loads((RUST / "crates/coordinator/src/exchanges/modules-v1.json").read_bytes())
 
 
-def certificates(folder):
+def certificates(folder, ca_name="fixture CA", dns_names=()):
     now = dt.datetime.now(dt.timezone.utc)
     def build(key, name, issuer, signer, ca):
         cert = (x509.CertificateBuilder().subject_name(name).issuer_name(issuer)
@@ -43,13 +43,13 @@ def certificates(folder):
                 .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(signer.public_key()), False)
                 .add_extension(x509.KeyUsage(True,False,False,False,False,ca,ca,False,False),True))
         if not ca:
-            cert = cert.add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), False)
+            cert = cert.add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1")), *(x509.DNSName(n) for n in dns_names)]), False)
             cert = cert.add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), False)
         return cert.sign(signer, hashes.SHA256()).public_bytes(serialization.Encoding.PEM)
     root, leaf = (ec.generate_private_key(ec.SECP256R1()) for _ in range(2))
     name = lambda n: x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, n)])
-    (folder/"ca.pem").write_bytes(build(root, name("fixture CA"), name("fixture CA"), root, True))
-    (folder/"cert.pem").write_bytes(build(leaf, name("localhost"), name("fixture CA"), root, False))
+    (folder/"ca.pem").write_bytes(build(root, name(ca_name), name(ca_name), root, True))
+    (folder/"cert.pem").write_bytes(build(leaf, name("localhost"), name(ca_name), root, False))
     (folder/"key.pem").write_bytes(leaf.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
 
 

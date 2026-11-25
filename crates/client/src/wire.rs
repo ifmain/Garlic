@@ -288,9 +288,8 @@ impl Exchange {
         let sock = if tls {
             let mut roots =
                 RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            #[cfg(any(target_os = "android", windows))]
-            if crate::api::legacy_gateway(&host) {
-                roots.add(CertificateDer::from(crate::api::NETWORK_CA))?;
+            if let Some(ca) = api.exchange_ca(endpoint)? {
+                roots.add(CertificateDer::from(ca))?;
             }
             if let Some(ca) = env::var_os("GARLIC_CA_CERT") {
                 for c in CertificateDer::pem_slice_iter(&std::fs::read(ca)?) {

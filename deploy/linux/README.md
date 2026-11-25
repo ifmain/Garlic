@@ -53,3 +53,25 @@ garlic-internal-network admin key admin
 ```
 
 Полученный токен и адрес своей ноды введите в Garlic Alpha.
+
+
+### Pairing clients with a private network CA
+
+Use a DNS name you control for the initial connection. Serve the public network CA certificate in DER format at `https://<entry-host>/.well-known/garlic/ca.der` on port 443. That HTTPS virtual host needs a certificate trusted by the client before pairing, with a matching DNS name and its intermediate certificates. The Garlic API and exchange can continue using the private network CA on their existing port. A gateway with an already trusted API certificate works without a private CA download.
+
+For example, convert the network CA's public certificate and serve that one file from the existing HTTPS virtual host:
+
+```sh
+install -d -m 0755 /var/lib/garlic-enrollment
+openssl x509 -in network-ca.pem -outform DER -out /var/lib/garlic-enrollment/ca.der
+chmod 0644 /var/lib/garlic-enrollment/ca.der
+```
+
+```nginx
+location = /.well-known/garlic/ca.der {
+    default_type application/pkix-cert;
+    alias /var/lib/garlic-enrollment/ca.der;
+}
+```
+
+First-time users should enter the enrollment host as their initial server. A fresh client that knows only a different gateway needs enrollment available on that gateway's host too. Existing profiles use the DNS entry node in the saved network directory or configured control routes. The enrollment GET carries no account or device token. Redirects are rejected. Once paired, clients keep the CA in the local profile and verify the gateway hostname and certificate on both the API and exchange paths. The CA does not enter the OS trust store. On an unknown issuer the client can fetch the public file again; keep the enrollment HTTPS certificate independently trusted during CA rotation.

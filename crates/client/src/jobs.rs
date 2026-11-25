@@ -191,7 +191,7 @@ impl<'a> Queue<'a> {
 fn execute(args: &[&str]) -> Result<(), StateError> {
     let settings = Settings::locate()?;
     let cfg = settings.load_effective()?;
-    let api = Api::new(&cfg)?;
+    let api = Api::new(&cfg, &settings)?;
     let devices = Devices::new(api.clone(), &settings)?;
     let sessions = settings.sessions()?;
     if args[0] == "status" {

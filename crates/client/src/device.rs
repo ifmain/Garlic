@@ -286,7 +286,7 @@ mod tests {
         let fast = "http://127.0.0.1:1".to_owned();
         settings.save_key("fixture", vec![slow.clone(), fast.clone()]).unwrap();
         let session = settings.sessions().unwrap().entries[&fast].clone();
-        let devices = Devices::new(Api::new(&Config::default()).unwrap(), &settings).unwrap();
+        let devices = Devices::new(Api::new(&Config::default(), &settings).unwrap(), &settings).unwrap();
         let device_id = devices.state.lock().unwrap().inherited.device_id;
         devices.state.lock().unwrap().entries.insert(fast.clone(), Entry {
             session: session.clone(),
