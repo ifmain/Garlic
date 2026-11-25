@@ -192,7 +192,7 @@ internal static class ReleaseClient
     static void Installed(Window owner,string version,bool required)
     {
         if(Prompt(owner,"Garlic Alpha","Версия "+version+" установлена. Перезапустить Garlic сейчас?",
-                "Перезапустить Garlic",required ? null : "ОК")) {
+                "Перезапустить Garlic",required ? "Выйти" : "ОК")) {
             RestartPath=Path.Combine(Root,version,"Garlic.exe");
             Application.Current.Shutdown();
         } else if(required) Application.Current.Shutdown();

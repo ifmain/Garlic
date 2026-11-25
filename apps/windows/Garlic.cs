@@ -1715,7 +1715,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.16";
+    internal const string Version = "0.9.17";
 #else
     internal const string Version = "0.9.2";
 #endif
