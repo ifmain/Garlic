@@ -381,6 +381,39 @@ impl Proxy {
         Err(last_error)
     }
 }
+pub(crate) fn plugin_store(settings: &Settings) -> Settings {
+    Settings { config: settings.config.with_file_name("plugin").join("client.json") }
+}
+fn route_sessions(settings: &Settings) -> Result<crate::settings::Sessions, StateError> {
+    let mut sessions=settings.sessions()?;
+    if health::read(&settings.side("installed-gpf")).is_some_and(|p| !p.connections.is_empty()) {
+        sessions.entries.extend(plugin_store(settings).sessions()?.entries);
+    }
+    Ok(sessions)
+}
+pub(crate) fn apply_connections(settings: &Settings, cfg: &mut Config) -> Result<(), StateError> {
+    let Some(data) = health::read(&settings.side("installed-gpf")) else { return Ok(()) };
+    if data.connections.is_empty() { return Ok(()) }
+    let sessions = route_sessions(settings)?;
+    let mut direct = Vec::new();
+    let mut ingress = Vec::new();
+    for row in data.connections {
+        let url = crate::settings::origin(&row.address)?;
+        let routes = match row.kind.as_str() {
+            "direct" => &mut direct, "ingress" => &mut ingress,
+            _ => return Err("unsupported plugin connection type".into()),
+        };
+        if sessions.entries.get(&url).is_some_and(|s| s.expires_at > time()) && !routes.contains(&url) {
+            routes.push(url);
+        }
+    }
+    if direct.is_empty() && ingress.is_empty() {
+        return Err("Dev Connection: sign in to a configured Garlic server first".into());
+    }
+    cfg.storage_urls = direct;
+    cfg.control_urls = ingress;
+    Ok(())
+}
 pub fn run(
     settings: &Settings,
     cfg: &Config,
@@ -390,7 +423,9 @@ pub fn run(
     let stop = Arc::new(AtomicBool::new(false));
     let signal = stop.clone();
     ctrlc::set_handler(move || signal.store(true, Ordering::Release))?;
-    serve(settings, cfg, api, address, stop, None, None)
+    let mut cfg = cfg.clone();
+    apply_connections(settings, &mut cfg)?;
+    serve(settings, &cfg, api, address, stop, None, None)
 }
 
 pub fn serve(
@@ -432,7 +467,7 @@ fn serve_inner(
     }) {
         return Err("invalid relay exit ID".into());
     }
-    let sessions = settings.sessions()?;
+    let sessions = route_sessions(settings)?;
     let mut endpoints = vec![];
     for (kind, urls) in [
         (Route::Direct, &cfg.storage_urls),
@@ -464,7 +499,7 @@ fn serve_inner(
         api,
         devices,
         health: health::RouteHealth::new(cfg.mode == "auto" && endpoints.len() > 1,
-            &settings.side("plugin-data")),
+            &settings.side("installed-gpf")),
         endpoints,
         required_exit,
         failed: Default::default(),

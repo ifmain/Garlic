@@ -61,6 +61,12 @@ pub fn run(args: &[&str]) -> Result<Value, StateError> {
                 settings.edit(|cfg| cfg.set(name, value))?,
             )?)
         }
+        ["plugin-key", url, "--key-stdin"] => {
+            if !settings.side("installed-gpf").is_file() { return Err("plugin is not installed".into()) }
+            let store=proxy::plugin_store(&settings);
+            std::fs::create_dir_all(store.config.parent().ok_or("invalid plugin directory")?)?;
+            return store.save_key(&input()?, vec![settings::origin(url)?]);
+        }
         ["set-key", value, urls @ ..] if urls.len() <= 2 => {
             let direct = settings::origin(
                 urls.first()

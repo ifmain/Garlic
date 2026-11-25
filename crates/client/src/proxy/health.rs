@@ -21,22 +21,36 @@ struct ProbePolicy {
     ingress_penalty_ms: u64,
 }
 
-impl ProbePolicy {
-    fn load(path: &std::path::Path) -> Self {
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Connection {
+    pub(super) kind: String,
+    pub(super) address: String,
+}
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct Data {
+        pub(super) struct Data {
             format: String, id: String, enabled: bool,
             interval_seconds: u64, ingress_penalty_ms: u64,
+            #[serde(default)] pub(super) connections: Vec<Connection>,
         }
+
+pub(super) fn read(path: &std::path::Path) -> Option<Data> {
         use std::io::Read;
-        let data = (|| {
+
             if !cfg!(feature = "alpha") { return None; }
             let mut bytes = Vec::new();
             std::fs::File::open(path).ok()?.take(8193).read_to_end(&mut bytes).ok()?;
             if bytes.len() > 8192 { return None; }
-            serde_json::from_slice::<Data>(&bytes).ok()
-        })();
+            let v: Data = serde_json::from_slice(&bytes).ok()?;
+            (v.enabled && v.format == "garlic-plugin-data/1" && v.id == "dev-connection"
+             && v.connections.len() <= 24 && (3..=60).contains(&v.interval_seconds)
+             && v.ingress_penalty_ms <= 250).then_some(v)
+
+}
+impl ProbePolicy {
+    fn load(path: &std::path::Path) -> Self {
+        let data = read(path);
         if let Some(v) = data {
             if v.enabled && v.format == "garlic-plugin-data/1" && v.id == "dev-connection"
                 && (3..=60).contains(&v.interval_seconds) && v.ingress_penalty_ms <= 250 {

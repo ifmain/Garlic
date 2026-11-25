@@ -1160,8 +1160,15 @@ public sealed class GarlicApp
 			C<Button>("Days").IsEnabled = true;
 		};
 		#if GARLIC_BUNDLE
+        foreach (string nav in new[]{"HomeButton","UsersButton","ServersButton"}) {
+            C<Button>(nav).Click += delegate {
+                var host=(Grid)C<FrameworkElement>("Auth").Parent;
+                var p=host.Children.OfType<ScrollViewer>().FirstOrDefault(x=>Equals(x.Tag,"plugins"));
+                if(p!=null)host.Children.Remove(p);
+            };
+        }
         C<Button>("PluginsButton").Click += delegate {
-            PluginFiles.Show(window, C<Button>("PluginsButton"), Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"), Say);
+            PluginFiles.Show(window, C<Button>("PluginsButton"), Environment.GetEnvironmentVariable("GARLIC_CLIENT_CONFIG"), Say, async (url,key) => { await Cli(new[]{"plugin-key",url,"--key-stdin"},key); });
         };
         C<Button>("UpdateButton").Visibility = Visibility.Visible;
         C<Button>("UpdateButton").Click += delegate { ReleaseClient.Check(window, true); };
@@ -1690,7 +1697,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.7";
+    internal const string Version = "0.9.8";
 #else
     internal const string Version = "0.9.2";
 #endif

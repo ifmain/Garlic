@@ -203,12 +203,13 @@ entry!(
             return Err("proxy is already running".into());
         }
         let settings = profile(&dir)?;
-        let cfg = settings.edit(|c| {
+        let mut cfg = settings.edit(|c| {
             c.set("mode", &mode)?;
             c.storage_urls = urls(&direct)?;
             c.control_urls = urls(&control)?;
             Ok(())
         })?;
+        proxy::apply_connections(&settings, &mut cfg)?;
         let api = Api::new(&cfg)?;
         let api_thread = api.clone();
         let stop = Arc::new(AtomicBool::new(false));

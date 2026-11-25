@@ -74,6 +74,7 @@ pub fn run_vpn(
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
     };
+    crate::proxy::apply_connections(&settings, &mut cfg)?;
     let (api, bypass) = crate::api::Api::for_windows_vpn(&mut cfg)?;
     let stop = Arc::new(AtomicBool::new(false));
     let ready = Arc::new(AtomicBool::new(false));

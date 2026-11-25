@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Collections;
+using System.Windows.Media;
 using System.Text;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
@@ -10,19 +13,26 @@ using Microsoft.Win32;
 internal static class PluginFiles
 {
     const string DataFormat = "garlic-plugin-data/1";
-    static Dictionary<string,object> Defaults() {
-        return new Dictionary<string,object> { {"format", DataFormat}, {"id","dev-connection"},
-            {"enabled", false}, {"interval_seconds",5}, {"ingress_penalty_ms",0} };
-    }
     internal static Dictionary<string,object> Parse(string json, bool package) {
         var v = new JavaScriptSerializer { MaxJsonLength = 8192, RecursionLimit = 4 }
             .Deserialize<Dictionary<string,object>>(json);
-        if (v == null || v.Count != (package ? 4 : 5) || !Equals(v["format"],package ? "gpf/1" : DataFormat) ||
+        if (v == null || v.Count != (package ? 4 : (v.ContainsKey("connections") ? 6 : 5)) || !Equals(v["format"],package ? "gpf/1" : DataFormat) ||
             !Equals(v["id"],"dev-connection") || (!package && !(v["enabled"] is bool)) ||
             !(v["interval_seconds"] is int) || !(v["ingress_penalty_ms"] is int) ||
             (int)v["interval_seconds"] < 3 || (int)v["interval_seconds"] > 60 ||
             (int)v["ingress_penalty_ms"] < 0 || (int)v["ingress_penalty_ms"] > 250)
             throw new InvalidDataException();
+        var rows=new List<Dictionary<string,object>>();
+        if(v.ContainsKey("connections")){
+            var items=v["connections"] as IList;
+            if(items==null || items.Count>24)throw new InvalidDataException();
+            foreach(var item in items){
+                var row=item as Dictionary<string,object>;
+                if(row==null || row.Count!=2 || !(Equals(row["kind"],"direct") || Equals(row["kind"],"ingress")))throw new InvalidDataException();
+                row["address"]=Address(row["address"] as string);rows.Add(row);
+            }
+        }
+        v["connections"]=rows;
         v["format"] = DataFormat;
         if(package) v["enabled"] = true;
         return v;
@@ -42,33 +52,76 @@ internal static class PluginFiles
             if(File.Exists(path)) File.Replace(tmp,path,null); else File.Move(tmp,path);
         } finally { if(File.Exists(tmp)) File.Delete(tmp); }
     }
-    static void Item(ContextMenu menu,string label,Action run,Action<string> status) {
-        var item=new MenuItem {Header=label};
-        item.Click += delegate { try { run(); } catch(Exception) { status("Ошибка файла плагина"); } };
-        menu.Items.Add(item);
+    static string Address(string value) {
+        Uri u;
+        if(value==null || value.Length>240 || !Uri.TryCreate(value,UriKind.Absolute,out u) ||
+           u.Scheme!="https" || u.Host.Length==0 || u.UserInfo!="" || u.AbsolutePath!="/" ||
+           u.Query!="" || u.Fragment!="" || u.Port==0) throw new InvalidDataException();
+        return u.GetLeftPart(UriPartial.Authority);
     }
-    internal static void Show(Window owner,Button button,string config,Action<string> status) {
-        string path=Path.ChangeExtension(config,"plugin-data");
-        var menu=new ContextMenu();
-        Func<Dictionary<string,object>> load=()=> File.Exists(path) ? Parse(Read(path),false) : Defaults();
-        try {
-            bool enabled=(bool)load()["enabled"];
-            Item(menu,"Dev Connection · "+(enabled?"выключить":"включить"),delegate {
-                var v=load(); v["enabled"]=!(bool)v["enabled"]; Save(path,v); status("Применится при следующем подключении");
-            },status);
-        } catch(Exception) { status("Настройки повреждены. Можно импортировать сохранённые данные."); }
-        foreach(bool manifest in new[]{true,false}) {
-            bool package=manifest;
-            Item(menu, package ? "Установить GPF" : "Импорт данных (JSON)",delegate {
-                var dialog=new OpenFileDialog { Filter=package?"Garlic Plugin Format|*.gpf":"JSON|*.json" };
-                if(dialog.ShowDialog(owner)!=true) return;
-                Save(path,Parse(Read(dialog.FileName),package)); status("Применится при следующем подключении");
-            },status);
-        }
-        Item(menu,"Экспорт данных (JSON)",delegate {
-            var dialog=new SaveFileDialog { Filter="JSON|*.json",FileName="dev-connection.json" };
-            if(dialog.ShowDialog(owner)==true) { Save(dialog.FileName,load()); status("Данные сохранены"); }
-        },status);
-        menu.PlacementTarget=button; menu.IsOpen=true;
+    internal static void Show(Window owner,Button button,string config,Action<string> status,Func<string,string,System.Threading.Tasks.Task> storeKey) {
+        string path=Path.ChangeExtension(config,"installed-gpf");
+        var host=(Grid)((FrameworkElement)owner.FindName("Auth")).Parent;
+        var previous=host.Children.OfType<ScrollViewer>().FirstOrDefault(x=>Equals(x.Tag,"plugins"));
+        if(previous!=null)host.Children.Remove(previous);
+        var panel=new StackPanel { MaxWidth=510,HorizontalAlignment=HorizontalAlignment.Stretch };
+        var page=new ScrollViewer { Content=panel,Tag="plugins",Background=new SolidColorBrush(Color.FromRgb(24,24,24)),VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
+        host.Children.Add(page);
+        bool details=false;
+        Action refresh=null;
+        Action<Panel,string,Action> action=(parent,title,click)=>{
+            var b=new Button { Content=title,Margin=new Thickness(0,4,8,4),MinWidth=72 };
+            b.Click+=delegate {try{click();}catch(Exception){status("Проверьте формат файла или адрес подключения");}}; parent.Children.Add(b);
+        };
+        Action<string,int> label=(title,size)=>panel.Children.Add(new TextBlock{Text=title,FontSize=size,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,6)});
+        refresh=delegate {
+            panel.Children.Clear(); bool installed=File.Exists(path);
+            action(panel,details?"‹  Плагины":"‹  Назад",delegate {if(details){details=false;refresh();}else host.Children.Remove(page);});
+            label(details?"Dev Connection":"Плагины",28);
+            if(!installed) {
+                label("Нет установленных плагинов",16);
+                action(panel,"Установить GPF",delegate{
+                    var d=new OpenFileDialog{Filter="Garlic Plugin Format|*.gpf"};
+                    if(d.ShowDialog(owner)==true){Save(path,Parse(Read(d.FileName),true));refresh();}
+                });return;
+            }
+            Action import=delegate {
+                var d=new OpenFileDialog{Filter="JSON|*.json"};
+                if(d.ShowDialog(owner)==true && File.Exists(path)){Save(path,Parse(Read(d.FileName),false));refresh();}
+            };
+            Dictionary<string,object> v;
+            try{v=Parse(Read(path),false);}catch{label("Настройки повреждены",16);action(panel,"Импорт JSON",import);return;}
+            if(!details){
+                label("Dev Connection",21);var bar=new WrapPanel();panel.Children.Add(bar);
+                var toggle=new CheckBox{Content="Включён",IsChecked=(bool)v["enabled"],VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,0,20,0)};
+                toggle.Click+=delegate{try{v["enabled"]=toggle.IsChecked==true;Save(path,v);}catch{refresh();status("Ошибка сохранения");}};bar.Children.Add(toggle);
+                action(bar,"⚙  Настройки",delegate{details=true;refresh();});return;
+            }
+            var rows=(List<Dictionary<string,object>>)v["connections"];
+            label("Подключения",20);label("Изменения применятся при следующем подключении.",14);
+            Action<int> editor=index=>{
+                panel.Children.Clear();label(index<0?"Добавить подключение":"Подключение",26);
+                label("Тип подключения",15);var kind=new ComboBox{ItemsSource=new[]{"Garlic · напрямую","Garlic · входная нода"},SelectedIndex=index<0 || Equals(rows[index]["kind"],"direct")?0:1};panel.Children.Add(kind);
+                label("Адрес сервера",15);var addr=new TextBox{Text=index<0?"":(string)rows[index]["address"],ToolTip="https://server.example:8443"};panel.Children.Add(addr);
+                label("Ключ Garlic",15); var key=new PasswordBox{ToolTip="Оставьте пустым, чтобы использовать сохранённый ключ"};panel.Children.Add(key);
+                var submit=new Button{Content="Сохранить",Margin=new Thickness(0,8,0,4)};panel.Children.Add(submit);
+                submit.Click+=async delegate{submit.IsEnabled=false;try{
+                    var item=new Dictionary<string,object>{{"kind",kind.SelectedIndex==0?"direct":"ingress"},{"address",Address(addr.Text.Trim())}};
+                    if(index<0 && rows.Count>=24)throw new InvalidDataException();
+                    if(key.Password.Length>0){await storeKey((string)item["address"],key.Password);key.Clear();}
+                    if(index<0){rows.Add(item);}else rows[index]=item;
+                    Save(path,v);refresh();
+                }catch{status("Не удалось сохранить подключение. Проверьте адрес и ключ.");}finally{submit.IsEnabled=true;}};
+                if(index>=0)action(panel,"Удалить подключение",delegate{rows.RemoveAt(index);Save(path,v);refresh();});
+                action(panel,"Отмена",refresh);
+            };
+            for(int i=0;i<rows.Count;i++){int index=i;action(panel,(Equals(rows[i]["kind"],"direct")?"Напрямую":"Входная нода")+"   ·   "+rows[i]["address"],()=>editor(index));}
+            action(panel,"＋  Добавить подключение",()=>editor(-1));
+            label("Данные плагина",20);var files=new WrapPanel();panel.Children.Add(files);
+            action(files,"Импорт JSON",import);
+            action(files,"Экспорт JSON",delegate{var d=new SaveFileDialog{Filter="JSON|*.json",FileName="dev-connection.json"};if(d.ShowDialog(owner)==true)Save(d.FileName,v);});
+            action(panel,"Удалить плагин",delegate{if(MessageBox.Show(owner,"Удалить Dev Connection и его настройки?","Плагины",MessageBoxButton.YesNo)==MessageBoxResult.Yes){File.Delete(Path.Combine(Path.GetDirectoryName(path),"plugin","client.sessions.json"));File.Delete(path);details=false;refresh();}});
+        };
+        refresh();
     }
 }
