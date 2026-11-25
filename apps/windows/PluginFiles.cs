@@ -124,7 +124,9 @@ internal static class PluginFiles
                 action(panel,"‹  Назад",delegate{host.Children.Remove(page);});label("Плагины",28);
                 var slots=Slots(config).ToList();if(slots.Count==0)label("Нет установленных плагинов",16);
                 foreach(string item in slots){
-                    var m=Manifest(Path.ChangeExtension(item,"gpf-module"));var data=Parse(Read(item));
+                    Dictionary<string,object> m,data;
+                    try {m=Manifest(Path.ChangeExtension(item,"gpf-module"));data=Parse(Read(item));}
+                    catch {label("Ошибка чтения слота "+Path.GetFileName(Path.GetDirectoryName(item)),14);continue;}
                     label((string)m["name"],21);var bar=new WrapPanel();panel.Children.Add(bar);
                     var toggle=new CheckBox{Content="Включён",IsChecked=(bool)data["enabled"],VerticalAlignment=VerticalAlignment.Center};
                     toggle.Click+=delegate{try{data["enabled"]=toggle.IsChecked==true;Save(item,data);}catch{refresh();}};bar.Children.Add(toggle);
