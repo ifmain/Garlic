@@ -7,11 +7,10 @@ sdkInfo:
   minSdkVersion: 29
   targetSdkVersion: 34
 versionInfo:
-  versionCode: 36
+  versionCode: 37
   versionName: 0.9.16
 resourcesInfo:
   packageId: 127
 doNotCompress:
 - arsc
 - png
-- so

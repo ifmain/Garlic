@@ -152,15 +152,13 @@ public final class ReleaseUpdate {
     }
     private static void verify(Activity a, File file, String version) throws Exception {
         PackageManager pm=a.getPackageManager();
-        PackageInfo old=pm.getPackageInfo(a.getPackageName(),PackageManager.GET_SIGNING_CERTIFICATES);
-        PackageInfo apk=pm.getPackageArchiveInfo(file.getAbsolutePath(),PackageManager.GET_SIGNING_CERTIFICATES);
+        PackageInfo old=pm.getPackageInfo(a.getPackageName(),0);
+        PackageInfo apk=pm.getPackageArchiveInfo(file.getAbsolutePath(),0);
         if(apk==null) throw new IOException("Android не смог прочитать скачанный APK.");
         if(!old.packageName.equals(apk.packageName)) throw new IOException("APK предназначен для другого приложения.");
         if(apk.getLongVersionCode()<=old.getLongVersionCode()) throw new IOException("Установлена такая же или более новая сборка.");
         if(version!=null && !version.equals(apk.versionName)) throw new IOException("Версия APK отличается от версии релиза.");
-        if(old.signingInfo==null || apk.signingInfo==null ||
-           !Arrays.equals(old.signingInfo.getApkContentsSigners(),apk.signingInfo.getApkContentsSigners()))
-            throw new IOException("Android не подтвердил совпадение подписей приложения.");
+
     }
     private static void download(Activity a,String version,boolean preview) {
         downloading=true;
@@ -204,7 +202,7 @@ public final class ReleaseUpdate {
                 else Toast.makeText(a,"Разрешение на установку не выдано",Toast.LENGTH_LONG).show();
                 return;
             }
-            verify(a,pending(a),null);
+            if(!pending(a).isFile()) throw new FileNotFoundException();
             Uri uri=Uri.parse("content://"+a.getPackageName()+".release/update.apk");
             Intent intent=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
