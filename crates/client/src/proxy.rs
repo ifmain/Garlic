@@ -408,7 +408,7 @@ pub(crate) fn apply_connections(settings: &Settings, cfg: &mut Config) -> Result
         }
     }
     if direct.is_empty() && ingress.is_empty() {
-        return Err("Dev Connection: sign in to a configured Garlic server first".into());
+        return Err("Plugin: sign in to a configured Garlic server first".into());
     }
     cfg.storage_urls = direct;
     cfg.control_urls = ingress;

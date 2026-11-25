@@ -277,7 +277,7 @@ async fn info(State(app): State<Shared>, headers: HeaderMap) -> Reply {
             use tokio::io::AsyncReadExt;
             if let Ok(file) = tokio::fs::File::open(path).await {
                 let mut bytes = Vec::new();
-                if file.take(2049).read_to_end(&mut bytes).await.is_ok() && bytes.len() <= 2048 {
+                if file.take(20481).read_to_end(&mut bytes).await.is_ok() && bytes.len() <= 20480 {
                     if let Ok(profile) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                         data["record_profile"] = profile;
                     }

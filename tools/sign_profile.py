@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--expires", type=int, required=True, help="UTC Unix timestamp")
     parser.add_argument("--frame-bytes", type=int, required=True)
     parser.add_argument("--module", type=Path, help="JSON with version, body and frame")
+    parser.add_argument("--wasm", type=Path, help="Sandboxed record_limit WebAssembly module")
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     if not (0 < args.sequence < 2**64 and time.time() < args.expires < 2**64
@@ -40,6 +41,11 @@ def main():
                 or module["frame"] not in ("fragments", "tlv")):
             parser.error("invalid module version or codec instructions")
         payload.update(abi=2, module=module)
+    if args.wasm:
+        code = args.wasm.read_bytes()
+        if not code.startswith(b"\0asm") or len(code) > 6144:
+            parser.error("invalid guest binary or size")
+        payload.update(abi=3, wasm=base64.b64encode(code).decode("ascii"))
     raw = json.dumps(payload).encode()
     signature = key.sign(b"Garlic Alpha record profile v1\0" + raw)
     envelope = dict(payload=base64.b64encode(raw).decode(), signature=base64.b64encode(signature).decode())

@@ -19,7 +19,7 @@ public final class ReleaseUpdate {
     private static final int PERMISSION = 4782;
     private static boolean checking, manualRequested, downloading;
     static File pending(android.content.Context c) { return new File(c.getCacheDir(), "garlic-release.apk"); }
-    private static void fetch(String address, OutputStream out, int limit) throws IOException {
+    static void fetch(String address, OutputStream out, int limit) throws IOException {
         HttpsURLConnection c = (HttpsURLConnection)new URL(address).openConnection();
         c.setRequestProperty("User-Agent", "Garlic-Alpha");
         c.setConnectTimeout(10000); c.setReadTimeout(20000);

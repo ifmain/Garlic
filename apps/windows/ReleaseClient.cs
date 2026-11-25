@@ -72,7 +72,7 @@ internal static class ReleaseClient
         }
     }
 
-    static byte[] Fetch(string url, int limit)
+    internal static byte[] Fetch(string url, int limit)
     {
         var req = (HttpWebRequest)WebRequest.Create(url);
         req.UserAgent = "Garlic-Alpha/" + GarlicBuild.Version;

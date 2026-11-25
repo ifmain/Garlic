@@ -7,6 +7,7 @@ edition = "2021"
 name = "garlic_release_cache"
 
 [dependencies]
+wasmi = { version = "=2.0.3", default-features = false, features = ["std", "validate", "stable", "portable-dispatch"] }
 base64 = "0.22"
 garlic-state = { path = "../state" }
 reqwest = { version = "0.12.28", default-features = false, features = ["blocking","rustls-tls"] }

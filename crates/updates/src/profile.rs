@@ -28,6 +28,7 @@ impl Default for Installed {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
+    wasm: Option<String>,
     network: String,
     abi: u32,
     module: Option<Module>,
@@ -37,7 +38,7 @@ struct Profile {
 }
 
 fn verify(env: &Envelope, key: &[u8], network: &str) -> Result<Profile, StateError> {
-    if env.payload.len() > 1368 || env.signature.len() != 88 {
+    if env.payload.len() > 16384 || env.signature.len() != 88 {
         return Err("oversize or invalid profile envelope".into());
     }
     let raw = STANDARD.decode(&env.payload)?;
@@ -45,11 +46,19 @@ fn verify(env: &Envelope, key: &[u8], network: &str) -> Result<Profile, StateErr
     signature::UnparsedPublicKey::new(&signature::ED25519, key)
         .verify(&[DOMAIN, raw.as_slice()].concat(), &sig)
         .map_err(|_| "incorrect profile signature")?;
-    let profile: Profile = serde_json::from_slice(&raw)?;
-    if profile.network != network || !matches!((profile.abi, profile.module), (1, None) | (2, Some(Module { version: 128..=255, .. }))) || profile.sequence == 0
+    let mut profile: Profile = serde_json::from_slice(&raw)?;
+    if profile.network != network || !matches!((profile.abi, profile.module, profile.wasm.is_some()), (1, None, false) | (2, Some(Module { version: 128..=255, .. }), false) | (3, _, true)) || profile.sequence == 0
         || !(1024..=16384).contains(&profile.frame_bytes)
     {
         return Err("incompatible record profile".into());
+    }
+    if let Some(code) = &profile.wasm {
+        let guest = crate::guest::Guest::load(code)?;
+        let bytes = guest.call("record_limit", (profile.frame_bytes as i32, 1024, 16384))?;
+        if !(1024..=16384).contains(&bytes) || profile.module.is_some_and(|m| m.version < 128) {
+            return Err("invalid guest record profile".into());
+        }
+        profile.frame_bytes = bytes as usize;
     }
     Ok(profile)
 }
@@ -122,6 +131,15 @@ mod tests {
         }
         assert!(verify(&sign(3,4096,false), &[0;32], "fixture").is_err());
         assert!(verify(&sign(3,4096,false), signer.public_key().as_ref(), "other").is_err());
+        let signed_guest = |seq, wasm| {
+            let raw = serde_json::to_vec(&serde_json::json!({"abi":3,"network":"fixture","sequence":seq,
+                "expires":100,"frame_bytes":4096,"wasm":wasm})).unwrap();
+            Envelope {signature:STANDARD.encode(signer.sign(&[DOMAIN,&raw].concat()).as_ref()),payload:STANDARD.encode(raw)}
+        };
+        let valid = signed_guest(3, "AGFzbQEAAAABCAFgA39/fwF/AwIBAAcQAQxyZWNvcmRfbGltaXQAAAoGAQQAIAEL");
+        assert_eq!(choose(Some(&valid), 50), Some(1024));
+        // A trapping but correctly signed replacement cannot displace the working guest.
+        assert_eq!(choose(Some(&signed_guest(4,"AGFzbQEAAAABCAFgA39/fwF/AwIBAAcQAQxyZWNvcmRfbGltaXQAAAoFAQMAAAs=")),50),Some(1024));
         assert_eq!(choose(None, 101), None);
         assert_eq!(choose(Some(&sign(4, 8192, false)), 50), Some(8192));
     }

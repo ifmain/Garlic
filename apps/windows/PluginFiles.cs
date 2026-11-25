@@ -13,11 +13,11 @@ using Microsoft.Win32;
 internal static class PluginFiles
 {
     const string DataFormat = "garlic-plugin-data/1";
-    internal static Dictionary<string,object> Parse(string json, bool package) {
+    internal static Dictionary<string,object> Parse(string json) {
         var v = new JavaScriptSerializer { MaxJsonLength = 8192, RecursionLimit = 4 }
             .Deserialize<Dictionary<string,object>>(json);
-        if (v == null || v.Count != (package ? 4 : (v.ContainsKey("connections") ? 6 : 5)) || !Equals(v["format"],package ? "gpf/1" : DataFormat) ||
-            !Equals(v["id"],"dev-connection") || (!package && !(v["enabled"] is bool)) ||
+        if (v == null || v.Count != (v.ContainsKey("connections") ? 6 : 5) || !Equals(v["format"],DataFormat) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(v["id"] as string ?? "",@"\A[a-z0-9-]{1,48}\z") || !(v["enabled"] is bool) ||
             !(v["interval_seconds"] is int) || !(v["ingress_penalty_ms"] is int) ||
             (int)v["interval_seconds"] < 3 || (int)v["interval_seconds"] > 60 ||
             (int)v["ingress_penalty_ms"] < 0 || (int)v["ingress_penalty_ms"] > 250)
@@ -34,12 +34,26 @@ internal static class PluginFiles
         }
         v["connections"]=rows;
         v["format"] = DataFormat;
-        if(package) v["enabled"] = true;
         return v;
+    }
+    static Dictionary<string,object> Manifest(string path) {
+        return new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(Read(path));
+    }
+    internal static void Install(string path,string text) {
+        var serializer=new JavaScriptSerializer {MaxJsonLength=16384,RecursionLimit=4};
+        var env=serializer.Deserialize<Dictionary<string,string>>(text);
+        var raw=Convert.FromBase64String(env["payload"]);
+        if(!ReleaseClient.Authentic(raw,Convert.FromBase64String(env["signature"])))throw new InvalidDataException();
+        var m=serializer.Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(raw));
+        if(!Equals(m["format"],"gpf/2") || ((string)m["name"]).Length>80 || ((string)m["wasm"]).Length>8192)throw new InvalidDataException();
+        var opts=new Dictionary<string,object>{{"format",DataFormat},{"id",m["id"]},{"enabled",true},{"interval_seconds",m["interval_seconds"]},{"ingress_penalty_ms",m["ingress_penalty_ms"]}};
+        var validated=Parse(serializer.Serialize(opts));
+        if(File.Exists(path)){validated=Parse(Read(path));if(!Equals(validated["id"],m["id"]))throw new InvalidDataException();}
+        Save(path,validated);Save(Path.ChangeExtension(path,"gpf-module"),m);
     }
     static string Read(string path) {
         using(var input=File.OpenRead(path)) {
-            if(input.Length>8192) throw new InvalidDataException();
+            if(input.Length>16384) throw new InvalidDataException();
             using(var reader=new StreamReader(input,new UTF8Encoding(false,true))) return reader.ReadToEnd();
         }
     }
@@ -75,24 +89,34 @@ internal static class PluginFiles
         };
         Action<string,int> label=(title,size)=>panel.Children.Add(new TextBlock{Text=title,FontSize=size,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,6)});
         refresh=delegate {
-            panel.Children.Clear(); bool installed=File.Exists(path);
+            panel.Children.Clear(); string module=Path.ChangeExtension(path,"gpf-module"); bool installed=File.Exists(module);
+            string title="Плагин";
+            if(installed) {
+                try { title=(string)Manifest(module)["name"]; }
+                catch { installed=false; details=false; status("Файл модуля повреждён. Установите GPF заново."); }
+            }
             action(panel,details?"‹  Плагины":"‹  Назад",delegate {if(details){details=false;refresh();}else host.Children.Remove(page);});
-            label(details?"Dev Connection":"Плагины",28);
+            label(details?title:"Плагины",28);
             if(!installed) {
                 label("Нет установленных плагинов",16);
+                var download=new Button{Content="Установить с GitHub"};panel.Children.Add(download);
+                download.Click+=async delegate {download.IsEnabled=false;try{
+                    var bytes=await System.Threading.Tasks.Task.Run(()=>ReleaseClient.Fetch("https://github.com/ifmain/Garlic/releases/latest/download/dev-connection.gpf",16384));
+                    Install(path,Encoding.UTF8.GetString(bytes));refresh();
+                }catch{status("Не удалось установить подписанный GPF");}finally{download.IsEnabled=true;}};
                 action(panel,"Установить GPF",delegate{
                     var d=new OpenFileDialog{Filter="Garlic Plugin Format|*.gpf"};
-                    if(d.ShowDialog(owner)==true){Save(path,Parse(Read(d.FileName),true));refresh();}
+                    if(d.ShowDialog(owner)==true){Install(path,Read(d.FileName));refresh();}
                 });return;
             }
             Action import=delegate {
                 var d=new OpenFileDialog{Filter="JSON|*.json"};
-                if(d.ShowDialog(owner)==true && File.Exists(path)){Save(path,Parse(Read(d.FileName),false));refresh();}
+                if(d.ShowDialog(owner)==true && File.Exists(path)){var imported=Parse(Read(d.FileName));if(!Equals(imported["id"],Manifest(module)["id"]))throw new InvalidDataException();Save(path,imported);refresh();}
             };
             Dictionary<string,object> v;
-            try{v=Parse(Read(path),false);}catch{label("Настройки повреждены",16);action(panel,"Импорт JSON",import);return;}
+            try{v=Parse(Read(path));}catch{label("Настройки повреждены",16);action(panel,"Импорт JSON",import);return;}
             if(!details){
-                label("Dev Connection",21);var bar=new WrapPanel();panel.Children.Add(bar);
+                label(title,21);var bar=new WrapPanel();panel.Children.Add(bar);
                 var toggle=new CheckBox{Content="Включён",IsChecked=(bool)v["enabled"],VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,0,20,0)};
                 toggle.Click+=delegate{try{v["enabled"]=toggle.IsChecked==true;Save(path,v);}catch{refresh();status("Ошибка сохранения");}};bar.Children.Add(toggle);
                 action(bar,"⚙  Настройки",delegate{details=true;refresh();});return;
@@ -119,8 +143,8 @@ internal static class PluginFiles
             action(panel,"＋  Добавить подключение",()=>editor(-1));
             label("Данные плагина",20);var files=new WrapPanel();panel.Children.Add(files);
             action(files,"Импорт JSON",import);
-            action(files,"Экспорт JSON",delegate{var d=new SaveFileDialog{Filter="JSON|*.json",FileName="dev-connection.json"};if(d.ShowDialog(owner)==true)Save(d.FileName,v);});
-            action(panel,"Удалить плагин",delegate{if(MessageBox.Show(owner,"Удалить Dev Connection и его настройки?","Плагины",MessageBoxButton.YesNo)==MessageBoxResult.Yes){File.Delete(Path.Combine(Path.GetDirectoryName(path),"plugin","client.sessions.json"));File.Delete(path);details=false;refresh();}});
+            action(files,"Экспорт JSON",delegate{var d=new SaveFileDialog{Filter="JSON|*.json",FileName="plugin-data.json"};if(d.ShowDialog(owner)==true)Save(d.FileName,v);});
+            action(panel,"Удалить плагин",delegate{if(MessageBox.Show(owner,"Удалить плагин и его настройки?","Плагины",MessageBoxButton.YesNo)==MessageBoxResult.Yes){File.Delete(Path.Combine(Path.GetDirectoryName(path),"plugin","client.sessions.json"));File.Delete(module);File.Delete(path);details=false;refresh();}});
         };
         refresh();
     }

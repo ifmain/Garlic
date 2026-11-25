@@ -33,19 +33,19 @@ public final class PluginPage extends Activity {
         boolean export=code==PluginFiles.EXPORT;
         Intent i=new Intent(export?Intent.ACTION_CREATE_DOCUMENT:Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE).setType(export?"application/json":"*/*");
-        if(export)i.putExtra(Intent.EXTRA_TITLE,"dev-connection.json"); startActivityForResult(i,code);
+        if(export)i.putExtra(Intent.EXTRA_TITLE,"plugin-data.json"); startActivityForResult(i,code);
     }
     void render() {
         ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(0xff181818);page=new LinearLayout(this);page.setOrientation(1);
         page.setPadding(dp(20),dp(24),dp(20),dp(24));scroll.addView(page);setContentView(scroll);
-        boolean installed=PluginFiles.state(this).isFile(); if(!installed)details=false;
+        boolean installed=PluginFiles.module(this).isFile(); if(!installed)details=false;
         button(page,details?"‹  Плагины":"‹  Garlic",()->onBackPressed());
-        label(details?"Dev Connection":"Плагины",28);
-        if(!installed){label("Нет установленных плагинов",16);button(page,"Установить GPF",()->pick(PluginFiles.INSTALL));return;}
+        label(details?PluginFiles.title(this):"Плагины",28);
+        if(!installed){label("Нет установленных плагинов",16);button(page,"Установить с GitHub",()->PluginFiles.download(this));button(page,"Установить GPF",()->pick(PluginFiles.INSTALL));return;}
         try {
             config=PluginFiles.load(this);
             if(!details){
-                label("Dev Connection",21);LinearLayout row=new LinearLayout(this);page.addView(row);
+                label(PluginFiles.title(this),21);LinearLayout row=new LinearLayout(this);page.addView(row);
                 Switch toggle=new Switch(this);toggle.setText("Включён   ");toggle.setChecked(config.getBoolean("enabled"));row.addView(toggle);
                 toggle.setOnCheckedChangeListener((v,on)->{try{config.put("enabled",on); write();}catch(Exception e){render();}});
                 button(row,"⚙  Настройки",()->{details=true;render();});return;
@@ -56,8 +56,8 @@ public final class PluginPage extends Activity {
                 button(page,(row.getString("kind").equals("direct")?"Напрямую":"Через входную ноду")+"   ·   Изменить",()->editor(index));}
             button(page,"＋  Добавить подключение",()->editor(-1));
             label("Данные плагина",20);button(page,"Импорт JSON",()->pick(PluginFiles.IMPORT));button(page,"Экспорт JSON",()->pick(PluginFiles.EXPORT));
-            button(page,"Удалить плагин",()->new AlertDialog.Builder(this).setMessage("Удалить Dev Connection и его настройки?")
-                .setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->{new java.io.File(getFilesDir(),"garlic/plugin/client.sessions.json").delete();new android.util.AtomicFile(PluginFiles.state(this)).delete();render();}).show());
+            button(page,"Удалить плагин",()->new AlertDialog.Builder(this).setMessage("Удалить плагин и его настройки?")
+                .setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->{new java.io.File(getFilesDir(),"garlic/plugin/client.sessions.json").delete();new android.util.AtomicFile(PluginFiles.module(this)).delete();new android.util.AtomicFile(PluginFiles.state(this)).delete();render();}).show());
         }catch(Exception e){label("Не удалось прочитать настройки",16);button(page,"Восстановить из JSON",()->pick(PluginFiles.IMPORT));}
     }
     void editor(int index) throws Exception {
