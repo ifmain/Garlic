@@ -307,3 +307,18 @@ pub unsafe extern "system" fn Java_org_garlic_client_GarlicBridge_startTun(
     };
     result(env, started)
 }
+
+#[no_mangle]
+pub unsafe extern "system" fn Java_org_garlic_client_ModuleCanvas_open(env:*mut JNIEnv,_:jclass,code:jstring)->jint {
+    from_java(env,code).ok().is_some_and(|s|crate::plugin_view::open(&s)) as jint
+}
+#[no_mangle]
+pub unsafe extern "system" fn Java_org_garlic_client_ModuleCanvas_tick(env:*mut JNIEnv,_:jclass,x:jint,y:jint,d:jint,ms:jint)->jni_sys::jintArray {
+    let Some(frame)=crate::plugin_view::tick(x,y,d,ms) else{return ptr::null_mut()};
+    let j=&(**env).v1_2;
+    let arr=(j.NewIntArray)(env,frame.len() as jint);
+    if !arr.is_null(){(j.SetIntArrayRegion)(env,arr,0,frame.len() as jint,frame.as_ptr());}
+    arr
+}
+#[no_mangle]
+pub extern "system" fn Java_org_garlic_client_ModuleCanvas_close(_: *mut JNIEnv,_:jclass){crate::plugin_view::garlic_view_close();}

@@ -28,6 +28,7 @@ use uuid::Uuid;
 mod health;
 
 struct Endpoint {
+    slot: Option<String>,
     url: String,
     route: Route,
     session: SavedSession,
@@ -39,6 +40,7 @@ struct Proxy {
     endpoints: Vec<Endpoint>,
     required_exit: Option<String>,
     health: health::RouteHealth,
+    hooks: Vec<(String,release_cache::guest::Guest)>,
     failed: Mutex<BTreeMap<String, Instant>>,
     lifetime: Duration,
     timeout: Duration,
@@ -326,7 +328,20 @@ impl Proxy {
         let mut order: Vec<_> = self.endpoints.iter().collect();
         self.health.order(&mut order, &self.failed, self.cooldown);
         let mut last_error: StateError = "no authenticated route available".into();
-        for endpoint in order {
+        let mut attempt=0;
+        while !order.is_empty() {
+            let mut index=0;
+            for (id,hook) in &self.hooks {
+                let normal=order.iter().position(|e| e.slot.is_none());
+                let extra=order.iter().position(|e| e.slot.as_ref()==Some(id));
+                match hook.call("route_next",(normal.is_some() as i32,extra.is_some() as i32,attempt)) {
+                    Ok(1) if normal.is_some()=>index=normal.unwrap(),
+                    Ok(2) if extra.is_some()=>index=extra.unwrap(),
+                    _=>{}
+                }
+            }
+            let endpoint=order.remove(index);
+            attempt+=1;
             match self.connect(endpoint, &dest, &mut local) {
                 Ok((mut exchange, id, device)) => {
                     self.failed.lock().unwrap().remove(&endpoint.url);
@@ -391,7 +406,53 @@ fn route_sessions(settings: &Settings) -> Result<crate::settings::Sessions, Stat
     }
     Ok(sessions)
 }
+pub(crate) fn slot_path(settings:&Settings,id:&str)->Result<Settings,StateError>{
+    if id.is_empty() || id.len()>48 || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b==b'-') {
+        return Err("invalid plugin id".into());
+    }
+    Ok(Settings{config:settings.config.with_file_name("plugins-v3").join(format!("s-{id}")).join("client.json")})
+}
+struct NetworkSlot {
+    id:String, guest:release_cache::guest::Guest, endpoints:Vec<Endpoint>
+}
+fn network_slots(settings:&Settings)->Vec<NetworkSlot>{
+    if !cfg!(feature="alpha"){return Vec::new()}
+    let Ok(entries)=std::fs::read_dir(settings.config.with_file_name("plugins-v3")) else{return Vec::new()};
+    let mut ids=entries.flatten().filter_map(|e|e.file_name().into_string().ok()).collect::<Vec<_>>();
+    ids.sort();
+    ids.into_iter().filter_map(|id|{
+        let id=id.strip_prefix("s-")?.to_owned();
+        let slot=slot_path(settings,&id).ok()?;
+        let read=|ext:&str|->Option<Value>{
+            let mut bytes=Vec::new();std::fs::File::open(slot.side(ext)).ok()?.take(16385).read_to_end(&mut bytes).ok()?;
+            if bytes.len()>16384{return None} serde_json::from_slice(&bytes).ok()
+        };
+        let m=read("gpf-module")?;let d=read("installed-gpf")?;
+        if m["id"]!=id || m["format"]!="gpf/3" || m["capability"]!="network" || d["id"]!=id || d["enabled"]!=true{return None}
+        let guest=release_cache::guest::Guest::load(m["wasm"].as_str()?).ok()?;
+        guest.call("route_next",(1,0,0)).ok()?;
+        let keys=plugin_store(&slot).sessions().ok()?;
+        let endpoints=d["connections"].as_array()?.iter().take(24).filter_map(|row|{
+            let url=crate::settings::origin(row["address"].as_str()?).ok()?;
+            let session=keys.entries.get(&url)?.clone();
+            if session.expires_at<=time(){return None}
+            let route=match row["kind"].as_str()?{"direct"=>Route::Direct,"ingress"=>Route::ThroughRu,_=>return None};
+            Some(Endpoint{url,route,session,slot:Some(id.clone())})
+        }).collect();
+        Some(NetworkSlot{id,guest,endpoints})
+    }).take(16).collect()
+}
 pub(crate) fn apply_connections(settings: &Settings, cfg: &mut Config) -> Result<(), StateError> {
+    apply_legacy_connections(settings,cfg)?;
+    for slot in network_slots(settings) {
+        for ep in slot.endpoints {
+            let urls=if ep.route==Route::Direct {&mut cfg.storage_urls} else {&mut cfg.control_urls};
+            if !urls.contains(&ep.url){urls.push(ep.url);}
+        }
+    }
+    Ok(())
+}
+fn apply_legacy_connections(settings:&Settings,cfg:&mut Config)->Result<(),StateError>{
     let Some(data) = health::read(&settings.side("installed-gpf")) else { return Ok(()) };
     if data.connections.is_empty() { return Ok(()) }
     let sessions = route_sessions(settings)?;
@@ -481,12 +542,22 @@ fn serve_inner(
         for url in urls {
             if let Some(session) = sessions.entries.get(url).filter(|s| s.expires_at > time()) {
                 endpoints.push(Endpoint {
+                    slot: None,
                     url: url.clone(),
                     route: kind,
                     session: session.clone(),
                 });
             }
         }
+    }
+    let mut hooks=Vec::new();
+    for slot in network_slots(settings) {
+        hooks.push((slot.id,slot.guest));
+        endpoints.extend(slot.endpoints.into_iter().filter(|e|{
+            let allowed=if e.route==Route::Direct {cfg.mode!="ru" && cfg.storage_urls.contains(&e.url)}
+                else {cfg.mode!="direct" && cfg.control_urls.contains(&e.url)};
+            allowed
+        }));
     }
     if endpoints.is_empty() {
         return Err("no valid user session for the configured routes".into());
@@ -501,6 +572,7 @@ fn serve_inner(
         health: health::RouteHealth::new(cfg.mode == "auto" && endpoints.len() > 1,
             &settings.side("installed-gpf")),
         endpoints,
+        hooks,
         required_exit,
         failed: Default::default(),
         timeout: Duration::from_millis(cfg.request_timeout_ms.clamp(1000, 120000)),

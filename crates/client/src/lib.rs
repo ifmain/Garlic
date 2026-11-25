@@ -7,6 +7,7 @@ mod metrics;
 mod journal;
 pub use jobs::run_job_cli;
 mod proxy;
+mod plugin_view;
 mod settings;
 #[cfg(any(target_os = "android", windows))]
 mod tunnel;
@@ -60,6 +61,13 @@ pub fn run(args: &[&str]) -> Result<Value, StateError> {
             return Ok(serde_json::to_value(
                 settings.edit(|cfg| cfg.set(name, value))?,
             )?)
+        }
+        ["plugin-slot-key",id,url,"--key-stdin"]=>{
+            let slot=proxy::slot_path(&settings,id)?;
+            if !slot.side("gpf-module").is_file(){return Err("plugin is not installed".into())}
+            let store=proxy::plugin_store(&slot);
+            std::fs::create_dir_all(store.config.parent().ok_or("invalid slot")?)?;
+            return store.save_key(&input()?,vec![settings::origin(url)?]);
         }
         ["plugin-key", url, "--key-stdin"] => {
             if !settings.side("installed-gpf").is_file() { return Err("plugin is not installed".into()) }

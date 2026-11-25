@@ -10,8 +10,18 @@ import org.json.*;
 
 public final class PluginFiles {
     static final int INSTALL = 4851, IMPORT = 4852, EXPORT = 4853;
-    static File state(Activity a) { return new File(a.getFilesDir(), "garlic/client.installed-gpf"); }
-    static File module(Activity a) { return new File(a.getFilesDir(),"garlic/client.gpf-module"); }
+    static File folder(Activity a) {
+        String id=a instanceof PluginPage?((PluginPage)a).selected:null;
+        return folder(a,id);
+    }
+    static File folder(Activity a,String id){
+        File base=new File(a.getFilesDir(),"garlic");
+        if(id==null)return base;
+        if(!id.matches("[a-z0-9-]{1,48}"))throw new IllegalArgumentException();
+        return new File(base,"plugins-v3/s-"+id);
+    }
+    static File state(Activity a){return new File(folder(a),"client.installed-gpf");}
+    static File module(Activity a) { return new File(folder(a),"client.gpf-module"); }
     static JSONObject manifest(Activity a) throws Exception {
         return new JSONObject(read(new AtomicFile(module(a)).openRead()));
     }
@@ -36,6 +46,33 @@ public final class PluginFiles {
         save(a,opts);
         AtomicFile dest=new AtomicFile(module(a));FileOutputStream stream=dest.startWrite();
         try{stream.write(raw);dest.finishWrite(stream);}catch(Exception e){dest.failWrite(stream);throw e;}
+    }
+    static void importPackage(PluginPage a,String text) throws Exception {
+        JSONObject env=new JSONObject(text);
+        if(!env.has("author")){a.selected=null;install(a,text);a.render();return;}
+        byte[] modulus=android.util.Base64.decode(env.getString("author"),0), raw=android.util.Base64.decode(env.getString("payload"),0);
+        if(modulus.length!=384 || (modulus[0]&128)==0)throw new IOException();
+        java.security.Signature verifier=java.security.Signature.getInstance("SHA256withRSA");
+        verifier.initVerify(java.security.KeyFactory.getInstance("RSA").generatePublic(new java.security.spec.RSAPublicKeySpec(new java.math.BigInteger(1,modulus),java.math.BigInteger.valueOf(65537))));
+        verifier.update(raw);
+        if(!verifier.verify(android.util.Base64.decode(env.getString("signature"),0)))throw new IOException();
+        JSONObject m=new JSONObject(new String(raw,StandardCharsets.UTF_8));
+        String id=m.getString("id"),cap=m.getString("capability"),name=m.getString("name");
+        if(!"gpf/3".equals(m.getString("format")) || !("canvas".equals(cap)||"network".equals(cap)) ||
+            !id.matches("[a-z0-9-]{1,48}") || name.isEmpty() || name.length()>80 || m.getString("wasm").length()>8192)throw new IOException();
+        StringBuilder fp=new StringBuilder();for(byte b:java.security.MessageDigest.getInstance("SHA-256").digest(modulus))fp.append(String.format(java.util.Locale.ROOT,"%02X",b));
+        File file=new File(folder(a,id),"client.gpf-module");
+        if(file.exists() && !new JSONObject(read(new AtomicFile(file).openRead())).getString("publisher").equals(fp.toString()))throw new IOException("publisher mismatch");
+        new AlertDialog.Builder(a).setTitle("Установить плагин?").setMessage(name+" ("+id+")\n"+("canvas".equals(cap)?"Экран и ввод на нём":"Выбор разрешённых подключений")+"\nSHA-256: "+fp)
+            .setNegativeButton("Отмена",null).setPositiveButton("Установить",(dialog,which)->{
+                try{
+                    a.selected=id;
+                    if(!state(a).isFile())save(a,new JSONObject().put("format","garlic-plugin-data/1").put("id",id).put("enabled",true)
+                        .put("connections",new JSONArray()).put("interval_seconds",5).put("ingress_penalty_ms",0));
+                    m.put("publisher",fp.toString());AtomicFile dest=new AtomicFile(file);FileOutputStream out=dest.startWrite();
+                    try{out.write(m.toString().getBytes(StandardCharsets.UTF_8));dest.finishWrite(out);}catch(Exception e){dest.failWrite(out);throw e;}
+                }catch(Exception e){toast(a,"Установка не удалась");}finally{a.selected=null;a.render();}
+            }).show();
     }
     static String address(String value) throws JSONException {
         try {
@@ -107,7 +144,7 @@ public final class PluginFiles {
                     }
                 } else {
                     String input=read(a.getContentResolver().openInputStream(data.getData()));
-                    if(request==INSTALL)install(a,input);
+                    if(request==INSTALL){a.runOnUiThread(()->{try{importPackage((PluginPage)a,input);}catch(Exception e){toast(a,"Неверный пакет или подпись");}});return;}
                     else {JSONObject imported=parse(input);if(!manifest(a).getString("id").equals(imported.getString("id")))throw new IOException();save(a,imported);}
                 }
                 a.runOnUiThread(() -> { if(a instanceof PluginPage)((PluginPage)a).render(); toast(a,request==EXPORT?"Данные сохранены":"Готово"); });

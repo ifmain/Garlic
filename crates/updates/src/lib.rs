@@ -2,6 +2,7 @@
 mod download;
 pub mod profile;
 pub mod guest;
+pub mod canvas;
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub use download::{stage, Source};
 use garlic_state::{edit_or_create, StateError};

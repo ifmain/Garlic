@@ -11,11 +11,12 @@ import org.json.*;
 
 public final class PluginPage extends Activity {
     private LinearLayout page;
+    String selected;
     private boolean details;
     private JSONObject config;
     int dp(int n) { return Math.round(getResources().getDisplayMetrics().density*n); }
-    @Override public void onCreate(Bundle state) { super.onCreate(state); details=state!=null && state.getBoolean("details"); render(); }
-    @Override public void onSaveInstanceState(Bundle b) { super.onSaveInstanceState(b); b.putBoolean("details",details); }
+    @Override public void onCreate(Bundle state) { super.onCreate(state); selected=state==null?null:state.getString("slot"); details=state!=null && state.getBoolean("details"); render(); }
+    @Override public void onSaveInstanceState(Bundle b) { super.onSaveInstanceState(b); b.putBoolean("details",details); b.putString("slot",selected); }
     @Override public void onBackPressed() { if(details){details=false; render();} else super.onBackPressed(); }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data); PluginFiles.result(this,request,result,data);
@@ -38,26 +39,38 @@ public final class PluginPage extends Activity {
     void render() {
         ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(0xff181818);page=new LinearLayout(this);page.setOrientation(1);
         page.setPadding(dp(20),dp(24),dp(20),dp(24));scroll.addView(page);setContentView(scroll);
-        boolean installed=PluginFiles.module(this).isFile(); if(!installed)details=false;
         button(page,details?"‹  Плагины":"‹  Garlic",()->onBackPressed());
-        label(details?PluginFiles.title(this):"Плагины",28);
-        if(!installed){label("Нет установленных плагинов",16);button(page,"Установить GPF",()->pick(PluginFiles.INSTALL));return;}
-        try {
-            config=PluginFiles.load(this);
-            if(!details){
-                label(PluginFiles.title(this),21);LinearLayout row=new LinearLayout(this);page.addView(row);
-                Switch toggle=new Switch(this);toggle.setText("Включён   ");toggle.setChecked(config.getBoolean("enabled"));row.addView(toggle);
-                toggle.setOnCheckedChangeListener((v,on)->{try{config.put("enabled",on); write();}catch(Exception e){render();}});
-                button(row,"⚙  Настройки",()->{details=true;render();});return;
-            }
+        if(!details){
+            selected=null;label("Плагины",28);int shown=0;
+            java.util.List<String> ids=new java.util.ArrayList<>();ids.add(null);
+            java.io.File[] dirs=new java.io.File(PluginFiles.folder(this,null),"plugins-v3").listFiles();
+            if(dirs!=null){java.util.Arrays.sort(dirs);for(java.io.File d:dirs)if(d.getName().matches("s-[a-z0-9-]{1,48}"))ids.add(d.getName().substring(2));}
+            for(String id:ids){try{
+                selected=id;if(!PluginFiles.module(this).isFile())continue;
+                JSONObject settings=PluginFiles.load(this);label(PluginFiles.title(this),21);shown++;
+                LinearLayout row=new LinearLayout(this);page.addView(row);Switch toggle=new Switch(this);toggle.setText("Включён   ");
+                toggle.setChecked(settings.getBoolean("enabled"));row.addView(toggle);
+                toggle.setOnCheckedChangeListener((v,on)->{try{selected=id;PluginFiles.save(this,settings.put("enabled",on));}catch(Exception e){PluginFiles.toast(this,"Ошибка сохранения");}finally{selected=null;render();}});
+                button(row,"⚙  Настройки",()->{selected=id;details=true;render();});
+            }catch(Exception e){PluginFiles.toast(this,"Ошибка чтения слота");}}
+            selected=null;if(shown==0)label("Нет установленных плагинов",16);
+            button(page,"Установить GPF",()->pick(PluginFiles.INSTALL));return;
+        }
+        try{
+            config=PluginFiles.load(this);JSONObject m=PluginFiles.manifest(this);label(m.getString("name"),28);
+            if("canvas".equals(m.optString("capability"))){
+                if(config.getBoolean("enabled"))page.addView(new ModuleCanvas(this,m.getString("wasm")),new LinearLayout.LayoutParams(-1,dp(280)));
+                else label("Плагин выключен",16);
+            }else{
             label("Подключения",20);label("Используются при следующем подключении.",14);
             JSONArray rows=config.getJSONArray("connections");
             for(int i=0;i<rows.length();i++){final int index=i;JSONObject row=rows.getJSONObject(i);label(row.getString("address"),16);
                 button(page,(row.getString("kind").equals("direct")?"Напрямую":"Через входную ноду")+"   ·   Изменить",()->editor(index));}
             button(page,"＋  Добавить подключение",()->editor(-1));
+            }
             label("Данные плагина",20);button(page,"Импорт JSON",()->pick(PluginFiles.IMPORT));button(page,"Экспорт JSON",()->pick(PluginFiles.EXPORT));
             button(page,"Удалить плагин",()->new AlertDialog.Builder(this).setMessage("Удалить плагин и его настройки?")
-                .setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->{new java.io.File(getFilesDir(),"garlic/plugin/client.sessions.json").delete();new android.util.AtomicFile(PluginFiles.module(this)).delete();new android.util.AtomicFile(PluginFiles.state(this)).delete();render();}).show());
+                .setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->{new java.io.File(PluginFiles.folder(this),"plugin/client.sessions.json").delete();new android.util.AtomicFile(PluginFiles.module(this)).delete();new android.util.AtomicFile(PluginFiles.state(this)).delete();details=false;selected=null;render();}).show());
         }catch(Exception e){label("Не удалось прочитать настройки",16);button(page,"Восстановить из JSON",()->pick(PluginFiles.IMPORT));}
     }
     void editor(int index) throws Exception {
@@ -73,7 +86,7 @@ public final class PluginPage extends Activity {
             String address=PluginFiles.address(addr.getText().toString().trim());
             if(index<0 && rows.length()>=24)throw new Exception();
             if(key.length()>0) {
-                java.io.File dir=new java.io.File(getFilesDir(),"garlic/plugin");
+                java.io.File dir=new java.io.File(PluginFiles.folder(this),"plugin");
                 Object reply=Class.forName("org.garlic.client.GarlicBridge").getMethod("saveKey",String.class,String.class,String.class)
                     .invoke(null,dir.getAbsolutePath(),address,key.getText().toString());
                 if(!new JSONObject((String)reply).optBoolean("ok"))throw new Exception();

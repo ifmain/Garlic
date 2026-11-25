@@ -5,8 +5,8 @@ use wasmi::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 /// One ABI for external modules. Guests see three integers and return one integer.
 /// Each invocation gets a fresh instance. No WASI or other host imports are linked.
 pub struct Guest {
-    engine: Engine,
-    module: Module,
+    pub(crate) engine: Engine,
+    pub(crate) module: Module,
 }
 
 impl Guest {
