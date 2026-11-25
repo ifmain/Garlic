@@ -18,6 +18,6 @@ try {
     Compress-Archive "$runtime/*" "$work/payload.zip"
     $fx="$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319"
     Set-Location -LiteralPath $PSScriptRoot
-    & "$fx/csc.exe" /nologo /define:GARLIC_ALPHA,GARLIC_BUNDLE /platform:x64 /optimize+ /target:winexe "/out:$out/Garlic-Alpha-Windows-x64.exe" "/win32icon:$runtime/assets/branding/garlic.ico" "/resource:$work/payload.zip,Garlic.Bundle" /resource:release-public.xml,Garlic.ReleasePublicKey /resource:Garlic.Interface.xaml,Garlic.Interface.xaml "/r:$fx/System.IO.Compression.dll" "/r:$fx/WPF/WindowsBase.dll" "/r:$fx/WPF/PresentationCore.dll" "/r:$fx/WPF/PresentationFramework.dll" "/r:$fx/System.Xaml.dll" "/r:$fx/System.Web.Extensions.dll" Garlic.cs ReleaseClient.cs PluginFiles.cs ModuleCanvas.cs
+    & "$fx/csc.exe" /nologo /define:GARLIC_ALPHA,GARLIC_BUNDLE /platform:x64 /optimize+ /target:winexe "/out:$out/Garlic-Alpha-Windows-x64.exe" "/win32icon:$runtime/assets/branding/garlic.ico" "/resource:$work/payload.zip,Garlic.Bundle" /resource:release-public.xml,Garlic.ReleasePublicKey /resource:Garlic.Interface.xaml,Garlic.Interface.xaml "/r:$fx/System.IO.Compression.dll" "/r:$fx/WPF/WindowsBase.dll" "/r:$fx/WPF/PresentationCore.dll" "/r:$fx/WPF/PresentationFramework.dll" "/r:$fx/System.Windows.Forms.dll" "/r:$fx/System.Drawing.dll" "/r:$fx/System.Xaml.dll" "/r:$fx/System.Web.Extensions.dll" Garlic.cs ReleaseClient.cs PluginFiles.cs ModuleCanvas.cs TrayWindow.cs
     if ($LASTEXITCODE) {throw 'Windows application build failed'}
 } finally {Pop-Location}

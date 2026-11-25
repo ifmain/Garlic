@@ -1335,8 +1335,11 @@ public sealed class GarlicApp
 		{
 			await Poll();
 		};
+		bool initialized = false;
 		window.Loaded += async (object sender, RoutedEventArgs e) =>
 		{
+			if (initialized) return;
+			initialized = true;
 			try
 			{
 				garlicApp.Say("Запускаем сетевой модуль…");
@@ -1416,12 +1419,9 @@ public sealed class GarlicApp
 			}
 #endif
 		};
-		window.Closing += (object sender, CancelEventArgs e) =>
-		{
-			timer.Stop();
-		};
 		window.Closed += (object sender, EventArgs e) =>
 		{
+			timer.Stop();
 			if (coreLock != null)
 			{
 				coreLock.Dispose();
@@ -1697,7 +1697,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.10";
+    internal const string Version = "0.9.11";
 #else
     internal const string Version = "0.9.2";
 #endif
@@ -1823,15 +1823,27 @@ internal static class InterfaceBootstrap
 				text = BitConverter.ToString(sHA.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToUpperInvariant())));
 			}
 			bool createdNew;
-			using (Mutex mutex = new Mutex(true, "Local\\GarlicInterface-" + text, out createdNew))
+			#if GARLIC_BUNDLE
+            using (var signal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\GarlicShow-" + text))
+            using (Mutex mutex = new Mutex(true, "Local\\GarlicTrayInterface-" + text, out createdNew))
+#else
+            using (Mutex mutex = new Mutex(true, "Local\\GarlicInterface-" + text, out createdNew))
+#endif
 			{
 				try
 				{
-					Window main = createdNew ? SelectWindow() : GarlicApp.CreateWindow(GarlicBuild.Version);
 #if GARLIC_BUNDLE
-                    main.Loaded += delegate { ReleaseClient.Check(main); };
-#endif
+                    if (!createdNew) {
+                        signal.Set();
+                        return;
+                    }
+                    Window main = SelectWindow();
+                    main.ContentRendered += delegate { ReleaseClient.Check(main); };
+                    using (var tray = new TrayWindow(main, path, signal)) application.Run(main);
+#else
+                    Window main = createdNew ? SelectWindow() : GarlicApp.CreateWindow(GarlicBuild.Version);
                     application.Run(main);
+#endif
 				}
 				finally
 				{
