@@ -99,11 +99,6 @@ internal static class PluginFiles
             label(details?title:"Плагины",28);
             if(!installed) {
                 label("Нет установленных плагинов",16);
-                var download=new Button{Content="Установить с GitHub"};panel.Children.Add(download);
-                download.Click+=async delegate {download.IsEnabled=false;try{
-                    var bytes=await System.Threading.Tasks.Task.Run(()=>ReleaseClient.Fetch("https://github.com/ifmain/Garlic/releases/latest/download/dev-connection.gpf",16384));
-                    Install(path,Encoding.UTF8.GetString(bytes));refresh();
-                }catch{status("Не удалось установить подписанный GPF");}finally{download.IsEnabled=true;}};
                 action(panel,"Установить GPF",delegate{
                     var d=new OpenFileDialog{Filter="Garlic Plugin Format|*.gpf"};
                     if(d.ShowDialog(owner)==true){Install(path,Read(d.FileName));refresh();}

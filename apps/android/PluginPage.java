@@ -41,7 +41,7 @@ public final class PluginPage extends Activity {
         boolean installed=PluginFiles.module(this).isFile(); if(!installed)details=false;
         button(page,details?"‹  Плагины":"‹  Garlic",()->onBackPressed());
         label(details?PluginFiles.title(this):"Плагины",28);
-        if(!installed){label("Нет установленных плагинов",16);button(page,"Установить с GitHub",()->PluginFiles.download(this));button(page,"Установить GPF",()->pick(PluginFiles.INSTALL));return;}
+        if(!installed){label("Нет установленных плагинов",16);button(page,"Установить GPF",()->pick(PluginFiles.INSTALL));return;}
         try {
             config=PluginFiles.load(this);
             if(!details){

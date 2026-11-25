@@ -37,11 +37,6 @@ public final class PluginFiles {
         AtomicFile dest=new AtomicFile(module(a));FileOutputStream stream=dest.startWrite();
         try{stream.write(raw);dest.finishWrite(stream);}catch(Exception e){dest.failWrite(stream);throw e;}
     }
-    static void download(PluginPage a) {
-        new Thread(()->{try{ByteArrayOutputStream out=new ByteArrayOutputStream();
-            ReleaseUpdate.fetch("https://github.com/ifmain/Garlic/releases/latest/download/dev-connection.gpf",out,16384);install(a,out.toString("UTF-8"));a.runOnUiThread(a::render);
-        }catch(Exception e){a.runOnUiThread(()->toast(a,"Не удалось установить подписанный GPF"));}},"garlic-gpf-download").start();
-    }
     static String address(String value) throws JSONException {
         try {
             java.net.URI u=new java.net.URI(value);
