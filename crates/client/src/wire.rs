@@ -288,7 +288,7 @@ impl Exchange {
         let sock = if tls {
             let mut roots =
                 RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", windows))]
             if crate::api::legacy_gateway(&host) {
                 roots.add(CertificateDer::from(crate::api::NETWORK_CA))?;
             }

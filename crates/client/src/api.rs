@@ -43,16 +43,16 @@ fn vpn_bootstrap_keeps_usable_routes_and_pins_exchange_socket() {
 #[derive(Clone)]
 pub struct Api {
     client: Client,
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", windows))]
     network_client: Client,
     clock_sample: std::sync::Arc<std::sync::Mutex<Option<(u64, std::time::Instant)>>>,
     #[cfg(windows)]
     bootstrap: Option<Arc<BTreeMap<String, Vec<SocketAddr>>>>,
 }
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", windows))]
 pub(crate) const NETWORK_CA: &[u8] = include_bytes!("legacy-network-ca.der");
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", windows))]
 pub(crate) fn legacy_gateway(host: &str) -> bool {
     matches!(host, "s1.cs2u.ru" | "s2.cs2u.ru" | "t1.cs2u.ru" |
         "179.254.142.243" | "179.254.152.111" | "80.64.31.193" |
@@ -61,7 +61,7 @@ pub(crate) fn legacy_gateway(host: &str) -> bool {
 
 impl Api {
     fn client_for(&self, _origin: &str) -> &Client {
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", windows))]
         if reqwest::Url::parse(_origin).ok().is_some_and(|u|
             u.scheme() == "https" && u.host_str().is_some_and(legacy_gateway)) {
             return &self.network_client;
@@ -72,7 +72,7 @@ impl Api {
     pub fn new(cfg: &Config) -> Result<Self, StateError> {
         Ok(Self {
             client: Self::builder(cfg)?.build()?,
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", windows))]
             network_client: Self::builder(cfg)?
                 .add_root_certificate(reqwest::Certificate::from_der(NETWORK_CA)?)
                 .build()?,
@@ -130,6 +130,7 @@ impl Api {
     ) -> Result<(Self, BTreeSet<Ipv4Addr>), StateError> {
         use std::net::IpAddr;
 
+        let mut network_builder = Self::builder(cfg)?.add_root_certificate(reqwest::Certificate::from_der(NETWORK_CA)?);
         let mut bootstrap = BTreeMap::new();
         let mut bypass = BTreeSet::new();
         let mut builder = Self::builder(cfg)?;
@@ -156,6 +157,7 @@ impl Api {
                 _ => None,
             }));
             builder = builder.resolve_to_addrs(host, &peers);
+            network_builder = network_builder.resolve_to_addrs(host, &peers);
             bootstrap.insert(host.to_owned(), peers);
         }
         for urls in [&mut cfg.control_urls, &mut cfg.storage_urls] {
@@ -172,6 +174,7 @@ impl Api {
         Ok((
             Self {
                 client: builder.build()?,
+                network_client: network_builder.build()?,
                 clock_sample: Default::default(),
                 bootstrap: Some(Arc::new(bootstrap)),
             },
