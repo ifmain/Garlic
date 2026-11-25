@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 import socket
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socketserver
 import threading
 import subprocess
 import time
@@ -67,41 +67,38 @@ def verify(serial, folder, port, password, request, token, publish, echo):
         clean.callback(run,*adb,"reverse","--remove",f"tcp:{port}")
         local = int(run(*adb,"forward","tcp:0",f"tcp:{proxy}"))
         clean.callback(run,*adb,"forward","--remove",f"tcp:{local}")
-        # Discovery succeeds on the direct gateway, but opening a stream hangs.
+        # Direct accepts TCP but never completes TLS. Ingress stays healthy.
         timed_out = threading.Event()
-        class DeadDirect(BaseHTTPRequestHandler):
-            def do_GET(self):
-                info = dict(request("/v1/auth/info",token=token),device_leases=False)
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(json.dumps(info).encode())
-            def do_POST(self):
-                if self.path == "/v1/infinity/streams":
-                    timed_out.set()
-                time.sleep(8)
-            def log_message(self,*args):
-                pass
-        dead = clean.enter_context(ThreadingHTTPServer(("127.0.0.1",0),DeadDirect))
+        class Stall(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.recv(1)
+                timed_out.set()
+                time.sleep(10)
+        dead = clean.enter_context(socketserver.ThreadingTCPServer(("127.0.0.1",0),Stall))
+        dead.daemon_threads = True
         threading.Thread(target=dead.serve_forever,daemon=True).start()
         clean.callback(dead.shutdown)
-        dead_port = dead.server_port
+        dead_port = dead.server_address[1]
         run(*adb,"reverse","--no-rebind",f"tcp:{dead_port}",f"tcp:{dead_port}")
         clean.callback(run,*adb,"reverse","--remove",f"tcp:{dead_port}")
-        delayed_port = clean.enter_context(delayed_gateway(port,timed_out))
+        healthy = threading.Event()
+        healthy.set()
+        delayed_port = clean.enter_context(delayed_gateway(port,healthy))
         run(*adb,"reverse","--no-rebind",f"tcp:{delayed_port}",f"tcp:{delayed_port}")
         clean.callback(run,*adb,"reverse","--remove",f"tcp:{delayed_port}")
         one = dict(version=128,frame="tlv",body="selective-ack")
         two = dict(version=129,frame="fragments",body="base")
         activate(one); offer(1,one)
         with (folder/"instrument.log").open("wb") as log:
-            child = subprocess.Popen([*adb,"shell","am","instrument","-w","-r","-e","origin",origin,
-                "-e","ingress",f"https://127.0.0.1:{delayed_port}","-e","direct",f"http://127.0.0.1:{dead_port}","-e","secret",password,"-e","bind",f"127.0.0.1:{proxy}","garlic.lab.moduletest/garlic.lab.ModuleProbe"],stdout=log,stderr=log)
+            command = [*adb,"shell","am","instrument","-w","-r","-e","origin",origin,
+                "-e","ingress",f"https://127.0.0.1:{delayed_port}","-e","direct",f"https://127.0.0.1:{dead_port}","-e","secret",password,"-e","bind",f"127.0.0.1:{proxy}","garlic.lab.moduletest/garlic.lab.ModuleProbe"]
+            child = subprocess.Popen(command,stdout=log,stderr=log)
             try:
                 def ready():
                     output = (folder/"instrument.log").read_text(errors="replace")
                     if child.poll() is not None: raise ValueError(output)
                     return "proxy ready" in output
-                wait(ready)
+                wait(ready, timeout=90)
                 @contextlib.contextmanager
                 def stream(version):
                     with socket.create_connection(("127.0.0.1",local),4) as conn:
@@ -120,8 +117,20 @@ def verify(serial, folder, port, password, request, token, publish, echo):
                         status_socket.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
                         with status_socket.makefile("rb") as response:
                             while response.readline() not in (b"",b"\r\n"): pass
-                            assert json.load(response)["last_route"]["via"] == "through_ru"
+                            state = json.load(response)
+                            assert state["last_route"]["via"] == "through_ru" and state["last_route_failure"]["via"] == "direct"
                     print("Android APK: direct stream stalled; ingress echoed 40000 bytes",flush=True)
+                    # Restore the same direct origin to a healthy authenticated gateway.
+                    run(*adb,"reverse",f"tcp:{dead_port}",f"tcp:{port}")
+                    time.sleep(16)
+                    with stream(128): pass
+                    with socket.create_connection(("127.0.0.1",local),5) as sock:
+                        sock.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                        with sock.makefile("rb") as response:
+                            while response.readline() not in (b"",b"\r\n"): pass
+                            state = json.load(response)
+                    assert state["last_route"]["via"] == "through_ru" and state["route_changes"] == 0, state["last_route"]
+                    print("Android APK: restored direct gateway; new echo stream retained ingress after probe interval",flush=True)
                     activate(two); offer(2,two)
                     with stream(129): roundtrip(old)
                     # Advertise only the existing module. An invalid replacement must
@@ -129,6 +138,28 @@ def verify(serial, folder, port, password, request, token, publish, echo):
                     offer(3,dict(two,version=130,command="open-file"))
                     with stream(129): roundtrip(old)
                     print("Android APK: module 128 active; 129 active on a new stream; old stream survived; signed unknown capability rejected.",flush=True)
+            finally:
+                run(*adb,"shell","am","force-stop","ru.ifmain.garlic")
+                child.terminate()
+                child.wait(timeout=10)
+
+        # On a fresh session both gateways are now healthy. Verify the direct
+        # preference and reuse across multiple independent TCP connections.
+        offer(4,two)
+        with (folder/"instrument.log").open("wb") as log:
+            child = subprocess.Popen(command,stdout=log,stderr=log)
+            try:
+                wait(ready, timeout=90)
+                for i in range(3):
+                    with stream(129): pass
+                    with socket.create_connection(("127.0.0.1",local),5) as sock:
+                        sock.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                        with sock.makefile("rb") as response:
+                            while response.readline() not in (b"",b"\r\n"): pass
+                            state = json.load(response)
+                    assert state["last_route"]["via"] == "direct" and state["route_changes"] == 0
+                    if i == 0: time.sleep(16)
+                print("Android APK: both gateways healthy; three echo streams stayed direct across fresh probes",flush=True)
             finally:
                 run(*adb,"shell","am","force-stop","ru.ifmain.garlic")
                 child.terminate()

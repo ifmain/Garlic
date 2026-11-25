@@ -97,6 +97,13 @@ impl State {
             })
             .min_by_key(|(id, w)| {
                 (
+                    // Rendezvous hashing keeps an account on the same eligible exit
+                    // across streams. Load balances workers within that exit.
+                    std::cmp::Reverse({
+                        use sha2::{Digest, Sha256};
+                        Sha256::new().chain_update(user.as_bytes())
+                            .chain_update(w.hello.node_id.as_bytes()).finalize()
+                    }),
                     (w.active as u64 + 1) * 1_048_576 / w.hello.max_streams,
                     **id,
                 )
@@ -416,6 +423,27 @@ mod tests {
         let state = hub.0.lock().unwrap();
         assert!(!state.flows.contains_key(&stale_id));
         assert!(state.flows.contains_key(&active_id));
+    }
+
+    #[test]
+    fn changing_worker_load_preserves_eligible_exit() {
+        let hub = Hub::default();
+        let user = Uuid::new_v4();
+        let mut receivers = vec![];
+        for name in ["first", "second"] {
+            let (tx, rx) = mpsc::channel(8);
+            receivers.push(rx);
+            assert!(hub.register(Hello {
+                protocol_version: 1, worker_id: Uuid::new_v4(), node_id: name.into(),
+                capabilities: vec![], max_streams: 32,
+            }, name.into(), tx));
+        }
+        let mut state = hub.0.lock().unwrap();
+        let chosen = state.select_for_open(None, user).unwrap();
+        state.workers.get_mut(&chosen).unwrap().active = 12;
+        assert_eq!(state.select_for_open(None, user), Ok(chosen));
+        state.workers.get_mut(&chosen).unwrap().draining = true;
+        assert_ne!(state.select_for_open(None, user).unwrap(), chosen);
     }
 
     #[tokio::test]

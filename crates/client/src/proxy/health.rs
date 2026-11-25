@@ -152,6 +152,7 @@ impl RouteHealth {
             };
             (
                 failed_recently,
+                e.route == Route::ThroughRu,
                 rank,
                 cost + if self.policy.guest.is_none() && e.route == Route::ThroughRu {
                     40

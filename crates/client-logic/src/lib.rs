@@ -45,6 +45,9 @@ impl ConnectionState {
 pub fn retry_allowed(message: Option<&str>) -> bool {
     let Some(message) = message else { return true };
     let lower = message.to_lowercase();
+    if matches!(lower.trim(), "http 400: invalid_destination" | "exit reset the tcp stream" | "destination closed during setup") {
+        return false;
+    }
     ![
         "device_in_use",
         "device access revoked",
@@ -92,6 +95,7 @@ mod tests {
 
     #[test]
     fn retry_policy() {
+        assert!(!retry_allowed(Some("HTTP 400: invalid_destination")));
         assert!(retry_allowed(None));
         assert!(retry_allowed(Some("HTTP 503")));
         assert!(!retry_allowed(Some("Error: HTTP 409")));

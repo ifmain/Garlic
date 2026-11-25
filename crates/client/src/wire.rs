@@ -643,7 +643,8 @@ impl Exchange {
         let end = Instant::now() + timeout;
         let mut last_open = Instant::now();
         while !self.opened {
-            if self.ended || Instant::now() >= end {
+            if self.ended { return Err("destination closed during setup".into()); }
+            if Instant::now() >= end {
                 return Err("destination open timed out".into());
             }
             self.poll(local)?;

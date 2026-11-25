@@ -44,6 +44,8 @@ struct Proxy {
     health: health::RouteHealth,
     hooks: Vec<(String,release_cache::guest::Guest,Arc<connector::SlotGate>)>,
     failed: Mutex<BTreeMap<String, Instant>>,
+    preferred: Mutex<Option<String>>,
+    election: Mutex<()>,
     lifetime: Duration,
     timeout: Duration,
     cooldown: Duration,
@@ -334,28 +336,54 @@ impl Proxy {
         order.retain(|ep|ep.slot.as_ref().is_none_or(|id|
             self.hooks.iter().any(|(name,_,gate)|name==id && gate.enabled())));
         self.health.order(&mut order, &self.failed, self.cooldown);
-        // During an outage keep new streams on a path that actually opened a
-        // stream, even if another gateway still responds quickly to discovery.
-        if self.health.enabled {
+        let mut peers: Vec<_> = self.peers.iter().filter(|p| p.enabled()).collect();
+        {
             let failed = self.failed.lock().unwrap();
-            if failed.values().any(|t| t.elapsed() < self.cooldown) {
-                if let Some(last) = self.metrics.last_origin() {
-                    if let Some(index) = order.iter().position(|e| e.url == last &&
-                        failed.get(&e.url).is_none_or(|t| t.elapsed() >= self.cooldown)) {
-                        order[..=index].rotate_right(1);
-                    }
-                }
-            }
-        }
-        if !self.peers.is_empty() {
-            let failed=self.failed.lock().unwrap();
-            if self.peers.iter().any(|p|p.enabled() && failed.get(&p.address).is_none_or(|t|t.elapsed()>=self.cooldown)){
-                order.retain(|e|failed.get(&e.url).is_none_or(|t|t.elapsed()>=self.cooldown));
-            }
+            peers.sort_by_key(|p| failed.get(&p.address).is_some_and(|t| t.elapsed() < self.cooldown));
         }
         let mut last_error: StateError = "no authenticated route available".into();
-        let mut attempt=0;
-        while !order.is_empty() {
+        let mut attempt = 0;
+        let mut election = None;
+        let mut retried = false;
+        while !order.is_empty() || !peers.is_empty() {
+            let mut pin = self.preferred.lock().unwrap().clone();
+            let available = |pin: &str| order.iter().any(|e| e.url == pin)
+                || peers.iter().any(|p| p.address == pin);
+            if pin.as_deref().is_none_or(|p| !available(p)) && election.is_none() {
+                election = Some(self.election.lock().unwrap());
+                pin = self.preferred.lock().unwrap().clone();
+            }
+            let pinned = pin.as_deref().is_some_and(available);
+            let peer_index = pin.as_deref().and_then(|p| peers.iter().position(|e| e.address == p));
+            if peer_index.is_some() || order.is_empty() {
+                let index = peer_index.unwrap_or(0);
+                let peer = peers[index];
+                let started = Instant::now();
+                match peer.open(&dest) {
+                    Ok(stream) => {
+                        if election.is_some() {
+                            *self.preferred.lock().unwrap() = Some(peer.address.clone());
+                        }
+                        drop(election);
+                        self.failed.lock().unwrap().remove(&peer.address);
+                        self.metrics.opened(&peer.address,Route::Direct,&Value::Null,started.elapsed().as_millis() as u64,
+                            &peer.kind.to_ascii_uppercase(),0,&Value::Null);
+                        if socks { local.write_all(&[5,0,0,1,0,0,0,0,0,0])?; }
+                        else {local.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;}
+                        return stream.relay(&local,self);
+                    }
+                    Err(e) => {
+                        let refused = matches!(e.downcast_ref::<russh::Error>(), Some(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)));
+                        self.metrics.route_error(&peer.address,Route::Direct,&e.to_string());
+                        last_error = e;
+                        if refused { break; }
+                        if pinned && !retried { retried = true; continue; }
+                        peers.remove(index);
+                        self.failed.lock().unwrap().insert(peer.address.clone(),Instant::now());
+                    }
+                }
+                continue;
+            }
             let mut index=0;
             for (id,hook,gate) in &self.hooks {
                 if !gate.enabled(){continue}
@@ -367,10 +395,17 @@ impl Proxy {
                     _=>{}
                 }
             }
-            let endpoint=order.remove(index);
+            if let Some(i) = pin.as_deref().and_then(|p| order.iter().position(|e| e.url == p)) {
+                index = i;
+            }
+            let endpoint=order[index];
             attempt+=1;
             match self.connect(endpoint, &dest, &mut local) {
                 Ok((mut exchange, id, device)) => {
+                    if election.is_some() {
+                        *self.preferred.lock().unwrap() = Some(endpoint.url.clone());
+                    }
+                    drop(election);
                     self.failed.lock().unwrap().remove(&endpoint.url);
                     let result = (|| {
                         if socks {
@@ -405,46 +440,16 @@ impl Proxy {
                     if !retry {
                         break;
                     }
-                    let mut failed = self.failed.lock().unwrap();
-                    failed.insert(endpoint.url.clone(), Instant::now());
-                    // Discovery checks only auth/info. A responsive node may still
-                    // time out opening a stream. Try the other path on this CONNECT.
-                    if let Some(next) = order.iter().position(|candidate|
-                        candidate.route != endpoint.route &&
-                        failed.get(&candidate.url).is_none_or(|t| t.elapsed() >= self.cooldown)
-                    ) {
-                        order[..=next].rotate_right(1);
+                    if pinned && !retried {
+                        retried = true;
+                        continue;
                     }
+                    order.remove(index);
+                    self.failed.lock().unwrap().insert(endpoint.url.clone(), Instant::now());
                 }
             }
         }
-        // A stream is retried only before acknowledging the local CONNECT request.
-        // Authentication/authorization failures are terminal, including on the last Garlic route.
-        if self.required_exit.is_none() && garlic_client_logic::retry_allowed(Some(&last_error.to_string())) {
-            let mut peers=self.peers.iter().filter(|p|p.enabled()).collect::<Vec<_>>();
-            {
-                let failed=self.failed.lock().unwrap();
-                peers.sort_by_key(|p|failed.get(&p.address).is_some_and(|t|t.elapsed()<self.cooldown));
-            }
-            for peer in peers {
-                let started=Instant::now();
-                match peer.open(&dest) {
-                    Ok(stream)=>{
-                        self.failed.lock().unwrap().remove(&peer.address);
-                        self.metrics.opened(&peer.address,Route::Direct,&Value::Null,started.elapsed().as_millis() as u64,
-                            &peer.kind.to_ascii_uppercase(),0,&Value::Null);
-                        if socks { local.write_all(&[5,0,0,1,0,0,0,0,0,0])?; }
-                        else {local.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;}
-                        return stream.relay(&local,self);
-                    }
-                    Err(e)=>{
-                        self.failed.lock().unwrap().insert(peer.address.clone(),Instant::now());
-                        self.metrics.route_error(&peer.address,Route::Direct,&e.to_string());
-                        last_error=e;
-                    }
-                }
-            }
-        }
+        drop(election);
         self.metrics.failed();
         if socks {
             local.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0])?;
@@ -669,6 +674,8 @@ fn serve_inner(
         peers,
         hooks,
         required_exit,
+        preferred: Mutex::default(),
+        election: Mutex::default(),
         failed: Default::default(),
         timeout: Duration::from_millis(cfg.request_timeout_ms.clamp(1000, 120000)),
         lifetime: Duration::from_secs(24 * 3600),

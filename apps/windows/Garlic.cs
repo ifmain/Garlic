@@ -629,12 +629,13 @@ public sealed class GarlicApp
 				(mode == 1) ? "127.0.0.1:10888" : "127.0.0.1:1080"
 			});
 			string clockWarning = Text(Get(status, "clock_warning"));
-			if (object.Equals(Get(status, "vpn_initializing"), true) || object.Equals(Get(status, "network_ready"), false))
+			bool initializing = object.Equals(Get(status, "vpn_initializing"), true);
+			if (initializing || object.Equals(Get(status, "network_ready"), false))
 			{
 				connected = false;
 				pending = true;
 				C<TextBlock>("RouteInfo").Text = clockWarning;
-				C<TextBlock>("Connection").Text = "Настраиваем VPN…";
+				C<TextBlock>("Connection").Text = initializing ? "Настраиваем VPN…" : "Ожидаем доступный маршрут…";
 				C<Button>("Power").Content = "Отключить";
 				return;
 			}
@@ -735,6 +736,8 @@ public sealed class GarlicApp
 			}
 			connected = true;
 			pending = false;
+			string message = C<TextBlock>("Message").Text;
+			if (message == "Подключаемся…" || message == "Запускаем SOCKS5 прокси на 127.0.0.1:10888…") Say("");
 			C<TextBlock>("Connection").Text = "Подключено";
 			C<Button>("Power").Content = "Отключить";
 		}
@@ -1718,7 +1721,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.19";
+    internal const string Version = "0.9.20";
 #else
     internal const string Version = "0.9.2";
 #endif

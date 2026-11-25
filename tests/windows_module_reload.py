@@ -59,8 +59,8 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def wait(check):
-    until = time.monotonic() + 20
+def wait(check, timeout=20):
+    until = time.monotonic() + timeout
     last = None
     while time.monotonic() < until:
         try:
@@ -283,6 +283,7 @@ def test(folder):
             saved["entries"][direct] = saved["entries"][origin].copy()
             sessions.write_text(json.dumps(saved))
             env.update(GARLIC_ROUTE_MODE="auto",GARLIC_STORAGE_URLS=direct,GARLIC_CONTROL_URLS=origin)
+            run(CORE,"config","set","request_timeout_ms","1000")
             proxy_port = free_port()
             client = CORE
             with process(client,"proxy","--bind",f"127.0.0.1:{proxy_port}"):
@@ -304,6 +305,31 @@ def test(folder):
                     route=json.load(response)["last_route"]
                 assert route["origin"]==origin and route["via"]=="through_ru",route
                 print(f"Auto: authenticated Direct stalled, ingress CONNECT in {elapsed:.2f}s, echoed 40000 bytes",flush=True)
+        # Restore a direct gateway after failover. Fresh probes must not move an
+        # established session back to it while the ingress still carries traffic.
+        restored = threading.Event()
+        with delayed_gateway(port, restored) as recovered_port:
+            recovered = f"https://127.0.0.1:{recovered_port}"
+            saved["entries"][recovered] = saved["entries"][origin].copy()
+            sessions.write_text(json.dumps(saved))
+            env.update(GARLIC_STORAGE_URLS=recovered, GARLIC_CONTROL_URLS=origin)
+            proxy_port = free_port()
+            with process(CORE,"proxy","--bind",f"127.0.0.1:{proxy_port}"):
+                wait(ready)
+                for i in range(4):
+                    with socket.create_connection(("127.0.0.1",proxy_port),8) as conn:
+                        conn.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+                        with conn.makefile("rb",buffering=0) as head:
+                            assert b" 200 " in head.readline()
+                            while head.readline() not in (b"",b"\r\n"): pass
+                        roundtrip(conn)
+                    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(f"http://127.0.0.1:{proxy_port}/status") as response:
+                        status = json.load(response)
+                    assert status["last_route"]["origin"] == origin and status["route_changes"] == 0
+                    if i == 0:
+                        restored.set()
+                        time.sleep(16)
+                print("PASS recovered direct route: four echo streams retain ingress across fresh probes",flush=True)
         # Fast discovery is insufficient: the data-plane open can still time out.
         # Use anonymous loopback fixtures and real authenticated ingress for the echo.
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -352,9 +378,9 @@ def test(folder):
                             while head.readline() not in (b"",b"\r\n"): pass
                         if works:
                             roundtrip(conn)
-                            assert len(attempted)==1, attempted
+                            assert len(attempted)==2, attempted
                         else:
-                            assert len(set(attempted)) == 3 and server.server_port in attempted[:2], attempted
+                            assert len(set(attempted)) == 3 and server.server_port == attempted[-1], attempted
                     if works:
                         with socket.create_connection(("127.0.0.1",proxy_port),8) as conn:
                             conn.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
@@ -362,7 +388,7 @@ def test(folder):
                                 assert b" 200 " in head.readline()
                                 while head.readline() not in (b"",b"\r\n"): pass
                             roundtrip(conn)
-                        assert len(attempted)==1, attempted
+                        assert len(attempted)==2, attempted
                     print("PASS stream-open timeout, ingress echo" if works else "PASS both paths down, 502",flush=True)
         run(CORE,"config","set","request_timeout_ms","5000")
         publish([{"version":128,"frame":"tlv","body":"selective-ack"}])
