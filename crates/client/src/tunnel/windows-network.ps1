@@ -107,6 +107,14 @@ try {
     $physicalDefault=Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -PolicyStore ActiveStore -ErrorAction SilentlyContinue |
         Where-Object {$physicalIndices -contains $_.InterfaceIndex} |
         Sort-Object @{Expression={$_.RouteMetric+$_.InterfaceMetric}} | Select-Object -First 1
+    $physicalDefault6=Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -PolicyStore ActiveStore -ErrorAction SilentlyContinue |
+        Where-Object {$physicalIndices -contains $_.InterfaceIndex} |
+        Sort-Object @{Expression={$_.RouteMetric+$_.InterfaceMetric}} | Select-Object -First 1
+    $directIndices=@($physicalDefault.InterfaceIndex,$physicalDefault6.InterfaceIndex) | Where-Object {$_} | Sort-Object -Unique
+    $directDns=foreach($index in $directIndices){
+        (Get-DnsClientServerAddress -InterfaceIndex $index -ErrorAction SilentlyContinue).ServerAddresses
+    }
+    $state.direct_egress=@{ipv4=$physicalDefault.InterfaceIndex;ipv6=$physicalDefault6.InterfaceIndex;dns=@($directDns | Where-Object {$_} | Select-Object -Unique)}
     # Resolve the original best path before adding our split-default routes.
     # Existing /32 routes belong to their current owner and are left untouched.
     foreach($cidr in @($taskData.bypass | Sort-Object -Unique)) {

@@ -1,3 +1,4 @@
+use super::direct_proxy::Egress;
 use garlic_state::StateError;
 use serde_json::{json, Value};
 use std::{
@@ -77,7 +78,7 @@ impl Guard {
         })
     }
 
-    pub fn enable(&mut self, bypass: impl IntoIterator<Item = Ipv4Addr>) -> Result<(), StateError> {
+    pub fn enable(&mut self, bypass: impl IntoIterator<Item = Ipv4Addr>) -> Result<Egress, StateError> {
         let bypass: Vec<_> = bypass.into_iter().map(|ip| format!("{ip}/32")).collect();
         let result = apply(&json!({
             "operation": "enable",
@@ -85,8 +86,10 @@ impl Guard {
             "gateway": tproxy_config::TUN_GATEWAY.to_string(),
             "bypass": bypass
         }))?;
-        self.state = Some(serde_json::from_slice(&result)?);
-        Ok(())
+        let state: Value = serde_json::from_slice(&result)?;
+        let egress = serde_json::from_value(state["direct_egress"].clone());
+        self.state = Some(state);
+        Ok(egress?)
     }
 
     pub fn activate(&mut self) -> Result<(), StateError> {

@@ -56,13 +56,13 @@ struct Proxy {
     metrics: Metrics,
     traffic: Arc<Traffic>,
 }
-enum Request {
+pub(super) enum Request {
     Connect(String, bool),
     Status,
     Pac,
 }
 
-fn receive_request(s: &mut TcpStream) -> Result<Request, StateError> {
+pub(super) fn receive_request(s: &mut TcpStream) -> Result<Request, StateError> {
     let mut first = [0];
     s.read_exact(&mut first)?;
     if first[0] == 5 {

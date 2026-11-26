@@ -63,6 +63,9 @@ fn runtime() -> Result<tokio::runtime::Runtime, StateError> {
 mod packet_tests;
 
 #[cfg(windows)]
+mod direct_proxy;
+
+#[cfg(windows)]
 mod windows_network;
 
 #[cfg(windows)]
@@ -178,14 +181,22 @@ fn windows(
             if token.is_cancelled() {
                 return Ok(());
             }
-            network.enable(bypass)?;
+            let egress = network.enable(bypass)?;
+            let direct_proxy = direct_proxy::DirectProxy::bind(egress).await?;
+            if token.is_cancelled() {
+                return Ok(());
+            }
             network.activate()?;
             ready.store(true, Ordering::Release);
-            let result = tun2proxy::run(dev, 1500, opts, token).await;
+            let result: Result<(), StateError> = tokio::select! {
+                result = tun2proxy::run(dev, 1500, opts, token) => {
+                    result.map(|_| ()).map_err(|e| e.to_string().into())
+                }
+                result = direct_proxy.serve() => result,
+            };
             ready.store(false, Ordering::Release);
             network.disable()?;
-            result.map_err(|e| e.to_string())?;
-            Ok(())
+            result
         })
     })
 }

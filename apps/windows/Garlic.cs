@@ -112,7 +112,7 @@ public sealed class GarlicApp
 
 	private readonly string[] tunnelNames = new string[2] { "VPN (вся система)", "Прокси SOCKS5 (127.0.0.1:10888)" };
 
-	private readonly string[] tunnelHints = new string[2] { "Маршрутизирует весь трафик устройства (требуются права администратора).", "Локальный SOCKS5 / HTTP прокси на 127.0.0.1:10888 для браузера без прав администратора." };
+	private readonly string[] tunnelHints = new string[2] { "Системный VPN (нужны права администратора). Прямой SOCKS5 / HTTP CONNECT: 127.0.0.1:10999.", "Локальный SOCKS5 / HTTP прокси на 127.0.0.1:10888 для браузера без прав администратора." };
 
 	private DateTime expiryDate = DateTime.Today.AddMonths(1);
 
@@ -1721,7 +1721,7 @@ public sealed class GarlicApp
 internal static class GarlicBuild
 {
 	#if GARLIC_ALPHA
-    internal const string Version = "0.9.21";
+    internal const string Version = "0.9.22";
 #else
     internal const string Version = "0.9.2";
 #endif
