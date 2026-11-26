@@ -209,6 +209,14 @@ def check(args, root):
                         except (EOFError,ConnectionError):
                             if time.monotonic()>deadline:raise
                             time.sleep(.15)
+                    if android:
+                        logs=adb("shell","cat",directory+"/logs/*.log").stdout.decode()
+                    else:
+                        logs="".join(p.read_text() for p in (root/"logs").glob("*.log"))
+                    for event in ("plugin_attempt","plugin_connected"):
+                        assert any(event in line and f"protocol={kind} " in line
+                                   for line in logs.splitlines()), (kind,event)
+                    assert password not in logs and "fixture.invalid" not in logs
                     cmd=command("plugin-test",manifest["id"],kind,address)
                     ok=subprocess.run(cmd,env=env,capture_output=True,timeout=20)
                     print(kind,"fallback PASS; HTTPS probe",ok.returncode,ok.stderr.decode(errors="replace")[:120],flush=True)

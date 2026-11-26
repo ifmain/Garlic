@@ -8,7 +8,7 @@ pub fn reason(message: &str) -> &'static str {
     for (needle, label) in [
         ("401", "unauthorized"), ("403", "forbidden"), ("409", "conflict"),
         ("429", "rate_limited"), ("503", "service_unavailable"), ("capacity", "capacity"),
-        ("invalid_destination", "invalid_destination"), ("connectfailed", "destination_connect_failed"),
+        ("invaliddestination", "invalid_destination"), ("invalid_destination", "invalid_destination"), ("connectfailed", "destination_connect_failed"),
         ("deadline has elapsed", "timeout"), ("timeout", "timeout"), ("timed out", "timeout"), ("reset", "connection_reset"),
         ("eof", "unexpected_eof"), ("dns", "dns"), ("firewall", "firewall"),
         ("session", "session"), ("route", "routing"), ("certificate", "tls_certificate"),

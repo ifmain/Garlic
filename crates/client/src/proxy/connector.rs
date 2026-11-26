@@ -28,6 +28,7 @@ pub(super) struct Login {
 
 #[derive(Clone)]
 pub(super) struct Peer {
+    pub slot: String,
     pub kind: String,
     pub address: String,
     pub host: String,
@@ -37,7 +38,7 @@ pub(super) struct Peer {
     pub gate: Option<std::sync::Arc<SlotGate>>,
 }
 impl Peer {
-    pub fn new(_slot: &str, kind: &str, address: &str, login: Login) -> Result<Self, StateError> {
+    pub fn new(slot: &str, kind: &str, address: &str, login: Login) -> Result<Self, StateError> {
         let u = url::Url::parse(address)?;
         if kind.len() > 32
             || !kind
@@ -68,6 +69,7 @@ impl Peer {
             return Err("invalid proxy settings".into());
         }
         Ok(Self {
+            slot: slot.into(),
             kind: kind.into(),
             address: address.into(),
             host,

@@ -342,6 +342,7 @@ impl Proxy {
             peers.sort_by_key(|p| failed.get(&p.address).is_some_and(|t| t.elapsed() < self.cooldown));
         }
         let mut last_error: StateError = "no authenticated route available".into();
+        let mut fallback_reason = "no_eligible_native_route";
         let mut attempt = 0;
         let mut election = None;
         let mut retried = false;
@@ -359,6 +360,10 @@ impl Proxy {
                 let index = peer_index.unwrap_or(0);
                 let peer = peers[index];
                 let started = Instant::now();
+                if peer_index.is_none() {
+                    crate::journal::write(&self.settings.config, "plugin_attempt",
+                        &format!("slot={} protocol={} trigger={}", peer.slot, peer.kind, fallback_reason));
+                }
                 match peer.open(&dest) {
                     Ok(stream) => {
                         if election.is_some() {
@@ -366,15 +371,27 @@ impl Proxy {
                         }
                         drop(election);
                         self.failed.lock().unwrap().remove(&peer.address);
-                        self.metrics.opened(&peer.address,Route::Direct,&Value::Null,started.elapsed().as_millis() as u64,
+                        let changed = self.metrics.opened(&peer.address,Route::Direct,&Value::Null,started.elapsed().as_millis() as u64,
                             &peer.kind.to_ascii_uppercase(),0,&Value::Null);
+                        if changed || peer_index.is_none() {
+                            crate::journal::write(&self.settings.config, "plugin_connected",
+                                &format!("slot={} protocol={} open_ms={}", peer.slot, peer.kind, started.elapsed().as_millis()));
+                        }
                         if socks { local.write_all(&[5,0,0,1,0,0,0,0,0,0])?; }
                         else {local.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;}
-                        return stream.relay(&local,self);
+                        let result = stream.relay(&local,self);
+                        if let Err(error) = &result {
+                            crate::journal::write(&self.settings.config, "plugin_relay_error",
+                                &format!("slot={} protocol={} cause={}", peer.slot, peer.kind, crate::journal::reason(&error.to_string())));
+                        }
+                        return result;
                     }
                     Err(e) => {
                         let refused = matches!(e.downcast_ref::<russh::Error>(), Some(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)));
                         self.metrics.route_error(&peer.address,Route::Direct,&e.to_string());
+                        fallback_reason = crate::journal::reason(&e.to_string());
+                        crate::journal::write(&self.settings.config, "plugin_open_error",
+                            &format!("slot={} protocol={} cause={}", peer.slot, peer.kind, fallback_reason));
                         last_error = e;
                         if refused { break; }
                         if pinned && !retried { retried = true; continue; }
@@ -399,9 +416,22 @@ impl Proxy {
                 index = i;
             }
             let endpoint=order[index];
+            if let Some(slot) = &endpoint.slot {
+                if !pinned {
+                    let trigger = if attempt == 0 { "route_selection" } else { fallback_reason };
+                    crate::journal::write(&self.settings.config, "plugin_attempt",
+                        &format!("slot={} protocol=garlic trigger={}", slot, trigger));
+                }
+            }
             attempt+=1;
             match self.connect(endpoint, &dest, &mut local) {
                 Ok((mut exchange, id, device)) => {
+                    if let Some(slot) = &endpoint.slot {
+                        if !pinned {
+                            crate::journal::write(&self.settings.config, "plugin_connected",
+                                &format!("slot={} protocol=garlic", slot));
+                        }
+                    }
                     if election.is_some() {
                         *self.preferred.lock().unwrap() = Some(endpoint.url.clone());
                     }
@@ -432,12 +462,21 @@ impl Proxy {
                     return result;
                 }
                 Err(e) => {
+                    if let Some(slot) = &endpoint.slot {
+                        crate::journal::write(&self.settings.config, "plugin_open_error",
+                            &format!("slot={} protocol=garlic cause={}", slot, crate::journal::reason(&e.to_string())));
+                    }
                     self.log_transport_error("route_error", endpoint, &e.to_string());
                     self.metrics
                         .route_error(&endpoint.url, endpoint.route, &e.to_string());
+                    fallback_reason = crate::journal::reason(&e.to_string());
                     let retry = garlic_client_logic::retry_allowed(Some(&e.to_string()));
                     last_error = e;
                     if !retry {
+                        if !peers.is_empty() {
+                            crate::journal::write(&self.settings.config, "plugin_skipped_error",
+                                &format!("policy=non_retryable cause={}", fallback_reason));
+                        }
                         break;
                     }
                     if pinned && !retried {
